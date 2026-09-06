@@ -22,7 +22,10 @@ def parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--config", type=Path, help="Additional YAML config (highest file precedence)"
     )
-    common.add_argument("--profile", help="Select one configured source/device")
+    common.add_argument(
+        "--profile",
+        help="Profile name in merged config; defaults to default_profile (not a file path)",
+    )
     verbosity = common.add_mutually_exclusive_group()
     verbosity.add_argument("-q", "--quiet", action="store_true", help="Only errors on stderr")
     verbosity.add_argument("-v", "--verbose", action="store_true", help="Include debug diagnostics")

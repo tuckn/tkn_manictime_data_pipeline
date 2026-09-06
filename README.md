@@ -151,6 +151,19 @@ Precedence is built-in defaults → user config → current directory's `.tkn/co
 `config show` includes source versions, the effective schema version, resolved paths and
 the source that supplied each value. No configuration file is written while reading it.
 
+Without `--config`, both the user config at `~/.tkn/manictime_data_pipeline/config.yaml`
+and the current directory's `.tkn/config.yaml` are discovered automatically; missing optional
+files are skipped. This merges settings, rather than selecting only the first existing file.
+An explicitly supplied `--config` path must exist; a missing file is an error.
+`--profile` selects a profile name within the merged settings, not a config file or folder.
+When omitted, `default_profile` must match a key in `profiles`. For example, after renaming
+`profiles.current-pc` to `profiles.desktop`, also set `default_profile: desktop`.
+The CLI does not guess another profile when the selected name is missing. The error lists
+the selected name, its source, available profiles and loaded config paths. Different profile
+names remain separate after merging, even if their `device_id` values match; the duplicate
+device error identifies the conflicting profiles and their config paths.
+
+
 | Key | Meaning |
 | --- | --- |
 | `default_profile` | Profile used unless `--profile` is supplied |
@@ -398,7 +411,7 @@ normal locking/shared-memory facilities; the pipeline issues no source write sta
 
 ### Upgrade from v0.1, v0.2 or v0.3
 
-The application is v0.4.0, configuration schema is 2.1.0, and state/run record schema is 3.0.0.
+The application is v0.4.1, configuration schema is 2.1.0, and state/run record schema is 3.0.0.
 Existing schema 2.0.x configurations remain supported without rewriting them. The new
 activity reduction limit defaults to 10%. Raw now uses fixed DB filenames; CSV keeps the
 v0.3 fixed paths. State schema 2.0.0 remains readable for verification and explicit migration.

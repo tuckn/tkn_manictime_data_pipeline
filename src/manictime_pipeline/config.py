@@ -206,15 +206,48 @@ def selected_profile(config: dict) -> Profile:
     name = data.get("default_profile")
     profiles = data["profiles"]
     if name not in profiles:
-        raise ValueError("Configure default_profile or select an existing profile with --profile")
+        origin = config["winning_sources"].get("default_profile", "not configured")
+        available = ", ".join(sorted(profiles)) or "(none)"
+        sources = ", ".join(source["path"] for source in config["sources"]) or "(none)"
+        if name is None:
+            problem = "default_profile is not configured."
+        else:
+            problem = f"Selected profile {name!r} does not exist (selected by {origin})."
+        if profiles:
+            remedy = "Set default_profile to an available profile name or use --profile NAME."
+        else:
+            remedy = (
+                "Run config init and configure profiles and default_profile in "
+                f"{app_root() / 'config.yaml'}, or supply --config PATH."
+            )
+        raise ValueError(
+            f"{problem} Available profiles: {available}. Loaded config files: {sources}. "
+            f"{remedy} Use config show to inspect resolved settings."
+        )
     p = profiles[name]
     missing = REQUIRED_PROFILE_KEYS - set(p)
     if missing:
         raise ValueError(f"Configure profiles.{name}: missing {sorted(missing)}")
     # Prevent different profiles silently sharing the same publication directory.
-    ids = [v.get("device_id", "").casefold() for v in profiles.values() if v.get("device_id")]
-    if len(ids) != len(set(ids)):
-        raise ValueError("device_id must be unique across profiles (case-insensitive)")
+    devices: dict[str, list[str]] = {}
+    for profile_name, values in profiles.items():
+        if values.get("device_id"):
+            devices.setdefault(values["device_id"].casefold(), []).append(profile_name)
+    conflicts = []
+    for names in devices.values():
+        if len(names) > 1:
+            entries = [
+                f"{n!r} ({config['winning_sources'].get(f'profiles.{n}.device_id', 'unknown')})"
+                for n in names
+            ]
+            conflicts.append(f"{profiles[names[0]]['device_id']!r}: " + ", ".join(entries))
+    if conflicts:
+        raise ValueError(
+            "device_id must be unique across profiles (case-insensitive). Conflicts: "
+            + "; ".join(conflicts)
+            + ". Profiles from config files merge by profile name. "
+            "Use config show to inspect resolved settings."
+        )
     result = Profile(
         name,
         p["device_id"],

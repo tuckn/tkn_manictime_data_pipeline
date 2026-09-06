@@ -181,3 +181,120 @@ def test_cli_quiet_verbose_conflict_across_subcommands(isolated):
 
     with pytest.raises(SystemExit):
         main(["--quiet", "config", "show", "--verbose"])
+
+
+@pytest.mark.parametrize("layer", ["home", "cwd"])
+def test_cli_discovers_config_without_options(profile, isolated, capsys, layer):
+    from manictime_pipeline.cli import main
+
+    cwd, home = isolated
+    path = home / "config.yaml" if layer == "home" else cwd / ".tkn/config.yaml"
+    write(
+        path,
+        {
+            "default_profile": "desktop",
+            "profiles": {
+                "desktop": {"device_id": "Desktop", "source_path": str(profile.source_path)}
+            },
+        },
+    )
+    assert main(["ingest", "--dry-run"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["profile"] == "desktop"
+    assert config_show(load_config())["sources"][0]["path"] == str(path)
+
+
+def test_profile_selection_precedence_without_guessing(isolated):
+    cwd, home = isolated
+    write(
+        home / "config.yaml",
+        {
+            "default_profile": "home",
+            "profiles": {
+                n: {"device_id": n, "source_path": "source"}
+                for n in ["home", "project", "explicit", "cli"]
+            },
+        },
+    )
+    write(cwd / ".tkn/config.yaml", {"default_profile": "project"})
+    explicit = cwd / "override.yaml"
+    write(explicit, {"default_profile": "explicit"})
+    assert selected_profile(load_config()).name == "project"
+    assert selected_profile(load_config(explicit)).name == "explicit"
+    assert selected_profile(load_config(explicit, "cli")).name == "cli"
+
+
+@pytest.mark.parametrize("selection", ["missing_default", "stale_default", "cli"])
+def test_profile_error_identifies_selection_and_loaded_config(isolated, selection):
+    cwd, home = isolated
+    path = home / "config.yaml"
+    data = {"profiles": {"desktop": {"device_id": "Desktop", "source_path": "source"}}}
+    if selection != "missing_default":
+        data["default_profile"] = "old-name" if selection == "stale_default" else "desktop"
+    write(path, data)
+    config = load_config(profile_name="typo" if selection == "cli" else None)
+    with pytest.raises(ValueError) as exc:
+        selected_profile(config)
+    message = str(exc.value)
+    assert "Available profiles: desktop" in message
+    assert str(path) in message
+    assert "config show" in message
+    if selection == "missing_default":
+        assert "default_profile is not configured" in message
+    else:
+        assert ("'typo'" if selection == "cli" else "'old-name'") in message
+        assert ("CLI --profile" if selection == "cli" else f"selected by {path}") in message
+    # Even a single available profile is not substituted for a bad or missing selection.
+    assert not (home / "state").exists()
+
+
+def test_no_config_error_explains_how_to_initialize(isolated):
+    cwd, home = isolated
+    with pytest.raises(ValueError) as exc:
+        selected_profile(load_config())
+    message = str(exc.value)
+    assert "Loaded config files: (none)" in message
+    assert "Available profiles: (none)" in message
+    assert "config init" in message
+    assert str(home / "config.yaml") in message
+
+
+def test_missing_explicit_config_does_not_fall_back(isolated):
+    cwd, home = isolated
+    write(
+        home / "config.yaml",
+        {
+            "default_profile": "desktop",
+            "profiles": {"desktop": {"device_id": "Desktop", "source_path": "source"}},
+        },
+    )
+    with pytest.raises(ValueError, match="Configuration file does not exist"):
+        load_config(cwd / "missing.yaml")
+
+
+def test_duplicate_device_error_identifies_both_layers(isolated):
+    cwd, home = isolated
+    user = home / "config.yaml"
+    project = cwd / ".tkn/config.yaml"
+    write(
+        user,
+        {
+            "default_profile": "desktop",
+            "profiles": {
+                "desktop": {"device_id": "PC", "source_path": "source"},
+            },
+        },
+    )
+    write(
+        project,
+        {
+            "profiles": {
+                "old-desktop": {"device_id": "pc", "source_path": "source"},
+            }
+        },
+    )
+    with pytest.raises(ValueError) as exc:
+        selected_profile(load_config())
+    message = str(exc.value)
+    for expected in ["unique", "'desktop'", "'old-desktop'", str(user), str(project)]:
+        assert expected in message
