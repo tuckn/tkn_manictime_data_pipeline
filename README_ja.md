@@ -274,8 +274,8 @@ max_activity_drop_percent: 100
 ```
 
 ```console
-tkn-manictime-pipeline --config "C:path	oapproved-reduction.yaml" ingest --dry-run
-tkn-manictime-pipeline --config "C:path	oapproved-reduction.yaml" ingest
+tkn-manictime-pipeline --config "C:\path\to\approved-reduction.yaml" ingest --dry-run
+tkn-manictime-pipeline --config "C:\path\to\approved-reduction.yaml" ingest
 ```
 
 通常の設定からプロファイル・保存先の設定を読み込める状態で使います。
