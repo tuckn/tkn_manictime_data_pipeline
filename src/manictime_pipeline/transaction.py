@@ -149,27 +149,22 @@ def prepare(profile: Profile, folder: Path, previous: dict | None, manifest: dic
         if after and file_hash(child_path(folder / "new", relative)) != new_sha:
             raise ValueError(f"Prepared CSV checksum mismatch: {relative}")
         operations.append({"path": relative, "old_sha256": old_sha, "new_sha256": new_sha})
-    if manifest.get("raw_layout") == "latest":
-        stage = raw_stage(profile, folder)
-        old_raw = (
-            database_items(previous["raw_capture"])
-            if previous and previous.get("raw_layout") == "latest"
-            else {}
-        )
-        raw_operations = []
-        for name, item in database_items(manifest["raw_capture"]).items():
-            old_sha = old_raw[name]["sha256"] if name in old_raw else None
-            new_sha = item["sha256"]
-            target = child_path(profile.raw_directory, name)
-            if file_hash(target) != old_sha:
-                raise ValueError(f"Existing or edited Raw cannot be overwritten: {target}")
-            if file_hash(stage / "new" / name) != new_sha:
-                raise ValueError(f"Prepared Raw checksum mismatch: {name}")
-            if old_sha != new_sha:
-                raw_operations.append(
-                    {"storage": "raw", "path": name, "old_sha256": old_sha, "new_sha256": new_sha}
-                )
-        operations = raw_operations + operations
+    stage = raw_stage(profile, folder)
+    old_raw = database_items(previous["raw_capture"]) if previous else {}
+    raw_operations = []
+    for name, item in database_items(manifest["raw_capture"]).items():
+        old_sha = old_raw[name]["sha256"] if name in old_raw else None
+        new_sha = item["sha256"]
+        target = child_path(profile.raw_directory, name)
+        if file_hash(target) != old_sha:
+            raise ValueError(f"Existing or edited Raw cannot be overwritten: {target}")
+        if file_hash(stage / "new" / name) != new_sha:
+            raise ValueError(f"Prepared Raw checksum mismatch: {name}")
+        if old_sha != new_sha:
+            raw_operations.append(
+                {"storage": "raw", "path": name, "old_sha256": old_sha, "new_sha256": new_sha}
+            )
+    operations = raw_operations + operations
     journal = {
         "schema_version": "2.0.0",
         "raw_root": str(profile.raw_directory.resolve()),
@@ -184,7 +179,7 @@ def prepare(profile: Profile, folder: Path, previous: dict | None, manifest: dic
 
 
 def operation_paths(profile: Profile, folder: Path, op: dict) -> tuple[Path, Path, Path]:
-    storage = op.get("storage", "csv")  # v0.3 journals contained only CSV operations.
+    storage = op.get("storage", "csv")
     if storage == "raw":
         if op["path"] not in DB_NAMES:
             raise ValueError("Unexpected Raw file in transaction journal")
@@ -285,11 +280,8 @@ def recover_pending(profile: Profile) -> list[dict]:
         if journal_path.exists():
             journal = read_json(journal_path)
             if (
-                journal.get("schema_version") not in {"1.0.0", "2.0.0"}
-                or (
-                    journal.get("schema_version") == "2.0.0"
-                    and journal.get("raw_root") != str(profile.raw_directory.resolve())
-                )
+                journal.get("schema_version") != "2.0.0"
+                or journal.get("raw_root") != str(profile.raw_directory.resolve())
                 or journal.get("run_id") != folder.name
                 or journal.get("processed_root") != str(profile.processed_path.resolve())
             ):

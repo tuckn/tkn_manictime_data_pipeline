@@ -223,7 +223,7 @@ def test_manifest_traversal_rejected(profile):
     atomic_json(
         profile.state_path / "current.json",
         {
-            "schema_version": "2.0.0",
+            "schema_version": "3.0.0",
             "manifest": "../../outside.json",
             "sha256": "x",
         },

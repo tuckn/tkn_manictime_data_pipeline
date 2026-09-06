@@ -68,14 +68,14 @@ def partition(table: str, row, columns: list[str]) -> str:
     return f"{table}/{value[:4]}/{value[5:7]}"
 
 
-def fingerprint(connection, tables: dict, *, utf8_bom: bool = False) -> dict:
+def fingerprint(connection, tables: dict) -> dict:
     """Scan all rows so old edits and deletions cannot hide below an ID watermark."""
     result = {}
     encoder = CsvEncoder()
     for table, spec in tables.items():
         LOG.info("Comparing %s", table)
         columns = [c["name"] for c in spec["columns"]]
-        header = (BOM if utf8_bom else b"") + encoder.row(columns)
+        header = encoder.row(columns)
         partitions = {}
         total = 0
         for row in rows(connection, table, spec):

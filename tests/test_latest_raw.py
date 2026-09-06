@@ -13,7 +13,7 @@ from test_fixed_layout import files
 from manictime_pipeline import pipeline, raw, transaction
 from manictime_pipeline.config import _validate
 from manictime_pipeline.io import atomic_json, read_json, sha256_file
-from manictime_pipeline.pipeline import ingest, load_current, migrate_layout, recover, verify
+from manictime_pipeline.pipeline import ingest, load_current, recover, verify
 
 
 def change_both(profile):
@@ -191,66 +191,6 @@ def test_prior_config_stays_compatible_and_threshold_is_optional():
         assert (
             _validate({"schema_version": version}, Path("config.yaml"))["schema_version"] == version
         )
-
-
-def make_v03(profile):
-    result = ingest(profile)
-    current = load_current(profile)
-    folder = profile.raw_directory / result["run_id"]
-    folder.mkdir()
-    for name in raw.DB_NAMES:
-        (profile.raw_directory / name).rename(folder / name)
-    current.update(schema_version="2.0.0", tool_version="0.3.0", capture=result["run_id"])
-    current.pop("raw_layout")
-    current.pop("activity_stats")
-    record = Path(result["manifest"])
-    atomic_json(record, current)
-    atomic_json(
-        profile.state_path / "current.json",
-        {
-            "schema_version": "2.0.0",
-            "manifest": f"runs/{result['run_id']}.json",
-            "sha256": sha256_file(record),
-        },
-    )
-    return folder, current
-
-
-def test_v03_migration_keeps_identity_csv_times_and_existing_archives(profile):
-    folder, previous = make_v03(profile)
-    old_raw = files(folder)
-    times = {p: p.stat().st_mtime_ns for p in profile.processed_path.rglob("*.csv")}
-    assert verify(profile)["activity_rows"] == 3
-    with pytest.raises(ValueError, match="migrate-layout"):
-        ingest(profile, True)
-    assert migrate_layout(profile, True)["can_migrate"]
-    result = migrate_layout(profile)
-    assert result["partitions"]["unchanged"] == 7
-    assert load_current(profile)["dataset_id"] == previous["dataset_id"]
-    assert files(folder) == old_raw
-    assert all(p.stat().st_mtime_ns == mtime for p, mtime in times.items())
-    assert verify(profile)["activity_rows"] == 3
-    ingest(profile)
-    assert len(list(profile.raw_directory.rglob("*.db"))) == 4  # Two legacy + two current.
-
-
-def test_migration_failure_restores_v03_current_without_new_raw(profile, monkeypatch):
-    folder, _ = make_v03(profile)
-    before_raw = files(profile.raw_directory)
-    pointer = (profile.state_path / "current.json").read_bytes()
-    original = pipeline.atomic_json
-
-    def fail_pointer(path, data):
-        if path.name == "current.json":
-            raise OSError("commit interrupted")
-        return original(path, data)
-
-    monkeypatch.setattr(pipeline, "atomic_json", fail_pointer)
-    with pytest.raises(OSError, match="commit interrupted"):
-        migrate_layout(profile)
-    assert files(profile.raw_directory) == before_raw
-    assert (profile.state_path / "current.json").read_bytes() == pointer
-    assert verify(profile)["activity_rows"] == 3
 
 
 def test_unowned_fixed_raw_and_manual_edit_are_never_overwritten(profile):

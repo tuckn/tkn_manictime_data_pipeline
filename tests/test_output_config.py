@@ -107,11 +107,11 @@ def test_profile_overrides_are_validated_before_merge(config_paths, field):
         load_config(higher)
 
 
-def test_legacy_config_rejected_without_modification(config_paths):
-    path = config_paths / "legacy.yaml"
+def test_unsupported_config_rejected_without_modification(config_paths):
+    path = config_paths / "unsupported.yaml"
     path.write_text('schema_version: "1.0.0"\n', encoding="utf-8")
     before = path.read_bytes()
-    with pytest.raises(ValueError, match="raw_path now names"):
+    with pytest.raises(ValueError, match="Unsupported schema_version"):
         load_config(path)
     assert path.read_bytes() == before
 

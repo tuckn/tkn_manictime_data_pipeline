@@ -14,7 +14,7 @@ from . import __version__
 from .config import config_show, initialize_config, load_config, selected_profile
 from .database import inspect_source
 from .logging_utils import SUCCESS, configure
-from .pipeline import ingest, migrate_layout, recover, verify
+from .pipeline import ingest, recover, verify
 
 
 def parser() -> argparse.ArgumentParser:
@@ -64,21 +64,14 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "verify", parents=[common], help="Verify published CSV against its Raw capture"
     )
-    for name, help_text in [
-        ("recover", "Restore an interrupted Raw/CSV update using the state journal"),
-        (
-            "migrate-layout",
-            "Migrate v0.1-v0.3 to latest Raw and fixed CSV paths; preserve legacy files",
-        ),
-    ]:
-        command = commands.add_parser(
-            name,
-            parents=[common],
-            help=help_text,
-            description=f"{help_text}. Writes by default. "
-            "Use --dry-run for a read-only preview without creating files or state.",
-        )
-        command.add_argument("--dry-run", action="store_true", help="Read-only preview; no writes")
+    command = commands.add_parser(
+        "recover",
+        parents=[common],
+        help="Restore an interrupted Raw/CSV update",
+        description="Restore an interrupted Raw/CSV update using the state journal. "
+        "Writes by default. Use --dry-run for a read-only preview without creating files or state.",
+    )
+    command.add_argument("--dry-run", action="store_true", help="Read-only preview; no writes")
     return root
 
 
@@ -108,8 +101,6 @@ def main(argv: list[str] | None = None) -> int:
                     result = ingest(profile, args.dry_run)
                 elif args.command == "recover":
                     result = recover(profile, args.dry_run)
-                elif args.command == "migrate-layout":
-                    result = migrate_layout(profile, args.dry_run)
                 else:
                     result = verify(profile)
         logging.log(SUCCESS, "%s completed", args.command)

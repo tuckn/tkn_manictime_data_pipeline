@@ -8,8 +8,9 @@ from .io import child_path, sha256_file
 
 
 def directory(manifest: dict) -> Path:
-    root = Path(manifest["raw_root"])
-    return root if manifest.get("raw_layout") == "latest" else child_path(root, manifest["capture"])
+    if manifest.get("raw_layout") != "latest":
+        raise ValueError("Unsupported Raw layout; expected latest")
+    return Path(manifest["raw_root"])
 
 
 def database_items(capture: dict) -> dict:
@@ -48,10 +49,7 @@ def statistics(connection) -> dict:
 def previous_statistics(previous: dict | None) -> dict | None:
     if previous is None:
         return None
-    if "activity_stats" in previous:
-        return previous["activity_stats"]
-    with readonly(directory(previous) / "ManicTimeReports.db") as connection:
-        return statistics(connection)
+    return previous["activity_stats"]
 
 
 def check_drop(previous: dict | None, current: dict, limit: float) -> dict:

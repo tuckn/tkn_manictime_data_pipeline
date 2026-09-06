@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import replace
 from pathlib import Path
 
-from . import __version__, legacy, raw, transaction
+from . import __version__, raw, transaction
 from .config import Profile
 from .database import DB_NAMES, backup, now, readonly, readonly_snapshot, schema
 from .export import changes, export_changed, fingerprint
 from .io import atomic_json, child_path, read_json, sha256_file
-from .legacy import csv_has_bom, validate_artifacts
+from .validation import validate_artifacts, validate_csv_contract
 
 LOG = logging.getLogger(__name__)
 FORMAT_VERSION = "3.0.0"
-READ_VERSIONS = {"2.0.0", FORMAT_VERSION}
 
 
 def _run_id() -> str:
@@ -30,7 +28,7 @@ def load_current(profile: Profile) -> dict | None:
     if not pointer.exists():
         return None
     index = read_json(pointer)
-    if index.get("schema_version") not in READ_VERSIONS:
+    if index.get("schema_version") != FORMAT_VERSION:
         raise ValueError("Unsupported current.json schema_version")
     manifest_path = child_path(profile.state_path, index["manifest"])
     if sha256_file(manifest_path) != index["sha256"]:
@@ -49,16 +47,13 @@ def load_current(profile: Profile) -> dict | None:
             raise ValueError(f"Dataset {key} changed; restore settings or use a separate dataset")
     if index["manifest"] != f"runs/{manifest['run_id']}.json":
         raise ValueError("Current run record path mismatch")
-    csv_has_bom(manifest)
+    validate_csv_contract(manifest)
     raw_root = Path(manifest["raw_root"]).resolve()
-    if raw_root not in {profile.raw_directory.resolve(), (profile.raw_directory / "Raw").resolve()}:
-        raise ValueError("Raw capture root differs from configured storage")
-    if manifest["schema_version"] == FORMAT_VERSION:
-        if manifest.get("raw_layout") != "latest" or raw_root != profile.raw_directory.resolve():
-            raise ValueError("Expected latest Raw in the configured device directory")
-        raw.database_items(manifest["raw_capture"])
-        if not isinstance(manifest.get("activity_stats"), dict):
-            raise ValueError("Missing activity statistics in current state")
+    if manifest.get("raw_layout") != "latest" or raw_root != profile.raw_directory.resolve():
+        raise ValueError("Expected latest Raw in the configured device directory")
+    raw.database_items(manifest["raw_capture"])
+    if not isinstance(manifest.get("activity_stats"), dict):
+        raise ValueError("Missing activity statistics in current state")
     for key, artifact in manifest["artifacts"].items():
         if artifact["path"] != f"{key}.csv":
             raise ValueError(f"Expected a fixed CSV path: {key}")
@@ -71,15 +66,13 @@ def unmanaged_csv(profile: Profile, previous: dict | None) -> list[str]:
     found = []
     for path in profile.processed_path.rglob("*.csv"):
         relative = path.relative_to(profile.processed_path)
-        if relative.parts[0] == "pipeline-v1":
-            continue  # Legacy output is preserved until a separate, deliberate cleanup.
         if relative.as_posix() not in owned:
             found.append(relative.as_posix())
     return sorted(found)
 
 
 def _check_raw_destination(profile: Profile, previous: dict | None) -> None:
-    if not previous or previous.get("raw_layout") != "latest":
+    if not previous:
         for name in DB_NAMES:
             if (profile.raw_directory / name).exists():
                 raise ValueError(
@@ -88,11 +81,9 @@ def _check_raw_destination(profile: Profile, previous: dict | None) -> None:
                 )
 
 
-def _preflight(profile: Profile, *, allow_legacy: bool = False) -> dict | None:
+def _preflight(profile: Profile) -> dict | None:
     transaction.require_settled(profile)
     previous = load_current(profile)
-    if previous is None and (profile.processed_path / "pipeline-v1/current.json").exists():
-        raise ValueError("Legacy layout found; run migrate-layout --dry-run, then migrate-layout")
     unknown = unmanaged_csv(profile, previous)
     if unknown:
         raise ValueError(
@@ -102,13 +93,7 @@ def _preflight(profile: Profile, *, allow_legacy: bool = False) -> dict | None:
     if previous:
         validate_artifacts(profile, previous)
         raw.validate(previous)
-        if previous.get("raw_layout") != "latest" and not allow_legacy:
-            raise ValueError(
-                "Versioned Raw layout found; run migrate-layout --dry-run, "
-                "then migrate-layout before ingest"
-            )
-    if not allow_legacy:
-        _check_raw_destination(profile, previous)
+    _check_raw_destination(profile, previous)
     return previous
 
 
@@ -346,7 +331,7 @@ def recover(profile: Profile, dry_run: bool = False) -> dict:
 
 def verify(profile: Profile) -> dict:
     profile.validate_paths()
-    manifest = _preflight(profile, allow_legacy=True)
+    manifest = _preflight(profile)
     if manifest is None:
         raise ValueError("No published dataset; run ingest first")
     LOG.info("Verifying current CSV and Raw capture")
@@ -357,11 +342,8 @@ def verify(profile: Profile) -> dict:
         tables = schema(connection)
         if tables != manifest["tables"]:
             raise ValueError("Raw schema does not match published schema")
-        expected = fingerprint(connection, tables, utf8_bom=csv_has_bom(manifest))
-        if (
-            manifest.get("raw_layout") == "latest"
-            and raw.statistics(connection) != manifest["activity_stats"]
-        ):
+        expected = fingerprint(connection, tables)
+        if raw.statistics(connection) != manifest["activity_stats"]:
             raise ValueError("Raw activity statistics differ from recorded state")
     diff = changes(expected, manifest["artifacts"])
     if any(diff[k] for k in ("created", "updated", "removed")):
@@ -373,113 +355,4 @@ def verify(profile: Profile) -> dict:
         "rows": sum(a["rows"] for a in expected.values()),
         "activity_rows": sum(a["rows"] for a in expected.values() if a["table"] == "Ar_Activity"),
         "current": str(profile.state_path / "current.json"),
-    }
-
-
-def migrate_layout(profile: Profile, dry_run: bool = False) -> dict:
-    """Copy verified v0.1-v0.3 data into latest Raw/fixed CSV, preserving legacy files."""
-    profile.validate_paths()
-    if dry_run:
-        return _migrate(profile, True)
-    with transaction.dataset_lock(profile):
-        transaction.recover_pending(profile)
-        return _migrate(profile, False)
-
-
-def _migrate(profile: Profile, dry_run: bool) -> dict:
-    transaction.require_settled(profile)
-    previous = load_current(profile)
-    if previous is not None and previous.get("raw_layout") == "latest":
-        raise ValueError("Latest Raw layout already exists; use ingest")
-    csv_previous = previous
-    old_profile = replace(profile, processed_path=profile.processed_path / "pipeline-v1")
-    if previous is None:
-        previous = legacy.load_current(old_profile)
-        if previous is None:
-            raise ValueError("No legacy dataset to migrate")
-    conflicts = unmanaged_csv(profile, csv_previous)
-    _check_raw_destination(profile, previous)
-    if dry_run:
-        validate_artifacts(profile if csv_previous else old_profile, previous)
-        return {
-            "action": "dry_run",
-            "can_migrate": not conflicts,
-            "conflicting_csvs": conflicts,
-            "partitions": len(previous["artifacts"]),
-            "from_schema_version": previous["schema_version"],
-            "raw_layout": "latest",
-            "processed_path": str(profile.processed_path),
-            "raw_directory": str(profile.raw_directory),
-            "state_path": str(profile.state_path),
-            "note": "Legacy files remain untouched. Raw is copied to fixed paths; "
-            "no new live capture. Full Raw validation runs before actual migration.",
-        }
-    if conflicts:
-        raise ValueError(
-            f"Unmanaged CSV files block migration; preserve them separately first: "
-            f"{conflicts[:5]} ({len(conflicts)} files)"
-        )
-    if csv_previous:
-        verify(profile)
-        capture = previous["raw_capture"]
-    else:
-        legacy.verify(old_profile)
-        capture = read_json(raw.directory(previous) / "capture.json")
-    run_id = _run_id()
-    folder = profile.state_path / "transactions" / run_id
-    report = {
-        "schema_version": FORMAT_VERSION,
-        "run_id": run_id,
-        "status": "running",
-        "started_at": now(),
-        "operation": "migrate-layout",
-    }
-    atomic_json(profile.state_path / "runs" / f"{run_id}.json", report)
-    try:
-        folder.mkdir(parents=True)
-        stage = transaction.begin_raw(profile, folder)
-        for name, detail in raw.database_items(capture).items():
-            transaction.copy_checked(raw.directory(previous) / name, stage / name, detail["sha256"])
-        with readonly_snapshot(stage / "ManicTimeReports.db") as connection:
-            tables = schema(connection)
-            fingerprints = fingerprint(connection, tables)
-            stats = raw.statistics(connection)
-            plan = changes(fingerprints, csv_previous["artifacts"] if csv_previous else {})
-            export_changed(
-                connection,
-                tables,
-                fingerprints,
-                set(plan["created"] + plan["updated"]),
-                folder / "new",
-            )
-        manifest = _manifest(
-            profile,
-            run_id,
-            previous,
-            report["started_at"],
-            capture,
-            tables,
-            fingerprints,
-            plan,
-            stats,
-        )
-        manifest["migration"] = {
-            "from_format": previous["schema_version"],
-            "legacy_manifest": previous,
-            "legacy_raw_directory": str(raw.directory(previous)),
-            "legacy_files_preserved": True,
-        }
-        manifest_path = _publish(profile, folder, csv_previous, manifest)
-    except BaseException as exc:
-        _failed(profile, run_id, report, exc)
-        raise
-    return {
-        "action": "migrated",
-        "run_id": run_id,
-        "manifest": str(manifest_path),
-        "current": str(profile.state_path / "current.json"),
-        "raw_capture": str(profile.raw_directory),
-        "processed_path": str(profile.processed_path),
-        "legacy_raw_preserved": str(raw.directory(previous)),
-        **manifest["summary"],
     }

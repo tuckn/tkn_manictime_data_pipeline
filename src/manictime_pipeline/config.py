@@ -80,9 +80,7 @@ def _validate(data: object, source: Path) -> dict:
     version = data.get("schema_version")
     if not isinstance(version, str) or not re.fullmatch(r"2\.[01]\.\d+", version):
         raise ValueError(
-            f"Unsupported schema_version {version!r} in {source}; supported: 2.0.x and 2.1.x. "
-            "For 1.0.x, follow the README upgrade instructions: raw_path now names "
-            "a parent directory shared by devices. Back up and update the config explicitly."
+            f"Unsupported schema_version {version!r} in {source}; supported: 2.0.x and 2.1.x."
         )
     for key, value in data.items():
         if key in {"schema_version", "profiles"}:

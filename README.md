@@ -6,7 +6,7 @@ Save the latest copies of ManicTime's SQLite databases as Raw and export reusabl
 The first run exports all available activity history and related tables; later runs
 replace only changed month/table CSVs at fixed paths. Raw keeps one current generation;
 CSV folders contain the latest data, and state holds provenance and checkpoints.
-Version 0.4 covers acquisition, extraction, execution records and verification;
+The CLI covers acquisition, extraction, execution records and verification;
 HTML reports, classification rules, AI advice and cross-source integration are future work.
 
 ## Use it — from installation to the first result
@@ -108,7 +108,6 @@ for example `Ar_Group/all.csv` or `Ar_Timeline/all.csv`. Only `Ar_Activity` is s
 
 Read Raw and CSV **after ingest succeeds**, not while it is running. Replacement is per file;
 an arbitrary reader can see different run versions across multiple files during an update.
-Legacy output is handled by the explicit migration procedure below.
 
 ## Command reference
 
@@ -120,7 +119,6 @@ Legacy output is handled by the explicit migration procedure below.
 | Capture and incrementally publish CSV                   | `ingest [--dry-run]`      |
 | Verify the current dataset and its Raw capture          | `verify`                  |
 | Recover an interrupted CSV update | `recover [--dry-run]` |
-| Migrate the v0.1/v0.2 CSV layout | `migrate-layout [--dry-run]` |
 
 Common options: `--config PATH`, `--profile NAME`, `-q/--quiet` and `-v/--verbose`.
 They work before or after the command. Quiet and verbose are mutually exclusive.
@@ -138,13 +136,15 @@ Even an unchanged CSV run captures both DBs and records a new execution. It upda
 latest Raw if its bytes differ; it does not accumulate an archive for every invocation.
 `removed` counts partitions removed from both the current index and the fixed CSV paths.
 Only tracked derived data is replaced/removed. Source DBs are preserved; superseded current
-Raw is deleted after a successful commit. Pre-existing legacy archives are not pruned.
+Raw is deleted after a successful commit.
 
 ## Configuration details
 
 Each YAML file declares `schema_version: "2.1.0"`. Versions 2.0.x and 2.1.x are accepted;
 unsupported major/minor versions, duplicate/unknown keys and incorrect types are errors.
 Each layer is validated before merging, so a higher layer cannot hide an invalid lower layer.
+Published state and run records use schema 3.0.0 and the latest Raw layout.
+Other stored-data formats are rejected; the CLI does not convert them automatically.
 
 Precedence is built-in defaults → user config → current directory's `.tkn/config.yaml`
 → `--config` → CLI profile selection. Profiles merge by name and then by property.
@@ -210,9 +210,8 @@ Add a separate named profile with a distinct `device_id` for a historical DB.
 Choose a Raw destination separate from the archived input directory.
 Only one selected profile runs per invocation; other sources are not automatically ingested.
 A published dataset is bound to its resolved source path, Raw root and device ID.
-The CSV root and profile name are also bound to state. Changing bindings is rejected;
-the explicit legacy-layout migration below handles the old Raw layout. Other storage
-migrations require a separate deliberate procedure.
+The CSV root and profile name are also bound to state. Changing these bindings is rejected.
+Moving existing data or renaming a profile requires a separate, verified procedure.
 
 ### Task Scheduler
 
@@ -257,7 +256,6 @@ aside on the same filesystem, not copied into a third generation in state.
 Candidates from failed or rejected updates are discarded after successful rollback;
 the failure details and capture metadata remain in state. If recovery/cleanup cannot
 finish, staging is retained and the next update must recover before capturing again.
-Existing archives from older releases remain until a separate deliberate cleanup.
 
 ### Activity reduction safeguard
 
@@ -398,7 +396,7 @@ Fixed paths do not provide a transaction spanning multiple files. Do not use Raw
 after a failed/interrupted update until recovery completes. Filesystem or storage failures
 that prevent rollback require restoring the affected files/state from backups.
 
-Manually edited/missing tracked CSVs and untracked CSVs outside the legacy `pipeline-v1`
+Manually edited/missing tracked CSVs and any untracked CSVs in the device CSV
 folder stop ingest and verify. Preserve untracked data elsewhere or restore tracked data;
 there is no force-overwrite option. Source DBs are always read-only.
 
@@ -408,59 +406,6 @@ destination permissions, free space or successful backup. SQLite itself manages 
 normal locking/shared-memory facilities; the pipeline issues no source write statements.
 
 ## Maintenance and development
-
-### Upgrade from v0.1, v0.2 or v0.3
-
-The application is v0.4.1, configuration schema is 2.1.0, and state/run record schema is 3.0.0.
-Existing schema 2.0.x configurations remain supported without rewriting them. The new
-activity reduction limit defaults to 10%. Raw now uses fixed DB filenames; CSV keeps the
-v0.3 fixed paths. State schema 2.0.0 remains readable for verification and explicit migration.
-
-For v0.1 configurations, first back up the loaded files listed by `config show`, change
-`schema_version` to `"2.0.0"`, and set the old per-device `raw_path` to its parent when its
-last folder is `device_id`. Both output settings name parent folders in schema 2.0.0.
-Keep the other edited settings. Unsupported schema 1.0.x is rejected, not silently reinterpreted.
-
-Reinstall the CLI, then run:
-
-```console
-tkn-manictime-pipeline config show
-tkn-manictime-pipeline migrate-layout --dry-run
-tkn-manictime-pipeline migrate-layout
-tkn-manictime-pipeline verify
-tkn-manictime-pipeline ingest --dry-run
-```
-
-For v0.1/v0.2, migration reads `pipeline-v1/current.json`, verifies its CSVs and Raw,
-and exports that snapshot into fixed CSV paths. For v0.3, it reads state `current.json`,
-verifies the existing dataset and keeps unchanged fixed CSVs in place. In both cases,
-the verified archived DBs are copied into the latest fixed Raw paths. It preserves dataset identity, embeds the legacy
-manifest and capture metadata in the new state record, and takes no new live DB snapshot.
-The dry-run checks legacy CSVs and lists conflicting existing CSVs; full Raw integrity and
-re-export validation happen in the normal command. A failed migration rolls back new outputs.
-
-**Existing PowerShell exports are not overwritten or removed.** If they occupy the device
-CSV folder, migration lists them and refuses to proceed. Verify the new exporter separately,
-then deliberately preserve those files outside that folder before migration. There is no
-automatic relocation or deletion of user-managed data.
-Stop any legacy export task that writes to the same CSV folder before switching to this
-layout; an old scheduled exporter can overwrite the new CSVs. If merged configuration
-contains the same `device_id` under different profile names, consolidate those names first.
-Use `config show` to locate the settings involved.
-
-Old `pipeline-v1` exports, old state records, `capture.json` files and DB snapshots remain
-untouched as migration evidence. They are the only legacy exception to the new layout;
-no new run directories or metadata are written into the CSV folder. Consume only the direct
-`Ar_Activity/*/*.csv` and `<table>/all.csv` paths, not all CSVs recursively under the device
-folder. Removal/archival of the old layout is a separate step after verification.
-
-A v0.1 Raw capture may remain under `<raw_path>/<device_id>/Raw/<run-id>/`.
-A v0.2/v0.3 Raw capture may remain under `<raw_path>/<device_id>/<run-id>/`.
-New ingest updates only `<raw_path>/<device_id>/ManicTimeCore.db` and `ManicTimeReports.db`.
-Legacy DB folders are not automatically deleted; their existing space is additional to
-the one current generation. `migrate-layout` is required before ingest on an older dataset.
-Migration also converts BOM CSV to UTF-8 without BOM, preserving values and LF record endings.
-Use `migrate-layout` once, then the ordinary `ingest` command for subsequent updates.
 
 After changing source, packaged resources or dependencies:
 
@@ -484,7 +429,7 @@ uv build
 Tests use synthetic SQLite files and include WAL capture, source preservation, historical
 edits/deletions, idempotency, schema changes, output corruption, process death between Raw moves, during CSV replacement and after commit, rollback,
 Raw retention bounds, activity reduction safeguards,
-legacy-layout collisions, state failures, locks, configuration layering, Unicode/BLOB/NULL
+unmanaged-file collisions, state failures, locks, configuration layering, Unicode/BLOB/NULL
 CSV and stderr/JSON behavior.
 Runtime modules are split into CLI/configuration, SQLite access, streaming CSV, pipeline
 publication and file/logging helpers. No live/private datasets are included in tests.
