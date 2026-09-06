@@ -214,9 +214,7 @@ def selected_profile(config: dict) -> Profile:
         p["device_id"],
         path_value(p["source_path"]),
         path_value(p.get("raw_path", data["raw_path"])),
-        path_value(p.get("processed_data_path", data["processed_data_path"]))
-        / p["device_id"]
-        / "pipeline-v1",
+        path_value(p.get("processed_data_path", data["processed_data_path"])) / p["device_id"],
         path_value(data["state_path"]) / name,
         data["backup_timeout_seconds"],
     )
@@ -249,9 +247,7 @@ def config_show(config: dict) -> dict:
         }
         if "device_id" in profile:
             entry["raw_directory"] = str(Path(entry["raw_path"]) / profile["device_id"])
-            entry["csv_directory"] = str(
-                Path(entry["processed_data_path"]) / profile["device_id"] / "pipeline-v1"
-            )
+            entry["csv_directory"] = str(Path(entry["processed_data_path"]) / profile["device_id"])
         effective[name] = entry
     result["effective_profiles"] = effective
     result["user_config_path"] = str(app_root() / "config.yaml")

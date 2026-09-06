@@ -69,8 +69,8 @@ def test_edits_deletes_inserts_and_month_moves_below_watermark(profile):
     assert "Ar_Activity/2025/12" in result["changes"]["created"]
     assert "Ar_Group/all" in result["changes"]["updated"]
     assert verify(profile)["activity_rows"] == 3
-    for artifact in old["artifacts"].values():
-        assert sha256_file(profile.processed_path / artifact["path"]) == artifact["sha256"]
+    assert not (profile.processed_path / old["artifacts"]["Ar_Activity/2026/02"]["path"]).exists()
+    assert (profile.raw_directory / old["capture"] / "ManicTimeReports.db").exists()
 
 
 def test_dry_run_creates_no_files_or_state(profile, tmp_path):
@@ -87,7 +87,7 @@ def test_dry_run_creates_no_files_or_state(profile, tmp_path):
 @pytest.mark.parametrize("stage", ["backup", "export", "pointer"])
 def test_failure_keeps_current_and_records_failure(profile, monkeypatch, stage):
     ingest(profile)
-    current_path = profile.processed_path / "current.json"
+    current_path = profile.state_path / "current.json"
     before = current_path.read_bytes()
     modify(profile, "UPDATE Ar_Activity SET Name='edited'")
 
@@ -124,7 +124,7 @@ def test_failed_export_can_be_retried(profile, monkeypatch):
     monkeypatch.setattr(pipeline, "export_changed", fail)
     with pytest.raises(OSError):
         ingest(profile)
-    assert not (profile.processed_path / "current.json").exists()
+    assert not (profile.state_path / "current.json").exists()
     monkeypatch.setattr(pipeline, "export_changed", real_export)
     assert ingest(profile)["action"] == "created"
     assert verify(profile)["action"] == "verified"
@@ -153,12 +153,12 @@ def test_schema_addition_reexports_columns(profile):
 
 def test_invalid_timestamp_keeps_raw_and_previous_output(profile):
     ingest(profile)
-    before = (profile.processed_path / "current.json").read_bytes()
+    before = (profile.state_path / "current.json").read_bytes()
     modify(profile, "UPDATE Ar_Activity SET StartLocalTime='unknown'")
     with pytest.raises(ValueError, match="StartLocalTime"):
         ingest(profile)
-    assert (profile.processed_path / "current.json").read_bytes() == before
-    assert len(list((profile.raw_directory).glob("*/capture.json"))) == 2
+    assert (profile.state_path / "current.json").read_bytes() == before
+    assert len(list((profile.raw_directory).glob("*/ManicTimeReports.db"))) == 2
 
 
 def test_source_change_refused(profile, tmp_path):
@@ -220,9 +220,9 @@ def test_raw_corruption_detected(profile):
 def test_manifest_traversal_rejected(profile):
     profile.processed_path.mkdir(parents=True)
     atomic_json(
-        profile.processed_path / "current.json",
+        profile.state_path / "current.json",
         {
-            "schema_version": "1.0.0",
+            "schema_version": "2.0.0",
             "manifest": "../../outside.json",
             "sha256": "x",
         },

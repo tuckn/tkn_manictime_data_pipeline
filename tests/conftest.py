@@ -67,7 +67,7 @@ def profile(tmp_path):
         "Test PC",
         source,
         tmp_path / "raw",
-        tmp_path / "processed" / "Test PC" / "pipeline-v1",
+        tmp_path / "processed" / "Test PC",
         tmp_path / "state" / "test",
         10,
     )

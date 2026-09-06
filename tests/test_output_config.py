@@ -33,7 +33,7 @@ def test_minimal_profile_uses_default_parent_paths(config_paths):
     profile = selected_profile(config)
     assert profile.raw_path == root / "app/data/raw"
     assert profile.raw_directory == root / "app/data/raw/Example Current PC"
-    assert profile.processed_path == root / "app/data/csv/Example Current PC/pipeline-v1"
+    assert profile.processed_path == root / "app/data/csv/Example Current PC"
     shown = config_show(config)["effective_profiles"]["pc"]
     assert shown["winning_sources"] == {
         "raw_path": "built-in",
@@ -66,9 +66,9 @@ def test_common_and_profile_values_have_identical_parent_semantics(config_paths)
     common = selected_profile(config)
     overridden = selected_profile(load_config(path, "b"))
     assert common.raw_directory == root / "common-raw/A"
-    assert common.processed_path == root / "common-csv/A/pipeline-v1"
+    assert common.processed_path == root / "common-csv/A"
     assert overridden.raw_directory == root / "private-raw/B"
-    assert overridden.processed_path == root / "private-csv/B/pipeline-v1"
+    assert overridden.processed_path == root / "private-csv/B"
     shown = config_show(config)
     assert shown["effective_profiles"]["b"]["raw_path"] == str(root / "private-raw")
     assert shown["effective_profiles"]["b"]["csv_directory"] == str(overridden.processed_path)
@@ -91,7 +91,7 @@ def test_profile_override_survives_higher_layer_common_default(config_paths):
     config = load_config(higher)
     resolved = selected_profile(config)
     assert resolved.raw_directory == root / "override-raw/PC"
-    assert resolved.processed_path == root / "common-csv/PC/pipeline-v1"
+    assert resolved.processed_path == root / "common-csv/PC"
     winners = config_show(config)["effective_profiles"]["pc"]["winning_sources"]
     assert winners["raw_path"] == str(lower)
     assert winners["processed_data_path"] == str(higher)

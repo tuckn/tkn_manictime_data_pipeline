@@ -1,7 +1,7 @@
 {
   "_example": "Abbreviated synthetic format illustration. Hashes are placeholders; this is not a verifiable run.",
-  "schema_version": "1.0.0",
-  "tool_version": "0.2.0",
+  "schema_version": "2.0.0",
+  "tool_version": "0.3.0",
   "run_id": "20260102T000000.000000Z-12345678",
   "dataset_id": "00000000-0000-4000-8000-000000000001",
   "device_id": "Example Current PC",
@@ -9,7 +9,6 @@
   "source_path": "C:/path/to/ManicTime",
   "raw_root": "C:/path/to/archive/Example Current PC",
   "capture": "20260102T000000.000000Z-12345678",
-  "capture_sha256": "<sha256>",
   "previous_run_id": "20260101T000000.000000Z-12345678",
   "artifacts": {
     "Ar_Activity/2025/12": {
@@ -17,7 +16,7 @@
       "rows": 42,
       "sha256": "<csv-sha256>",
       "schema_sha256": "<schema-sha256>",
-      "path": "runs/20260101T000000.000000Z-12345678/Ar_Activity/2025/12.csv",
+      "path": "Ar_Activity/2025/12.csv",
       "origin_run_id": "20260101T000000.000000Z-12345678"
     },
     "Ar_Activity/2026/01": {
@@ -25,12 +24,49 @@
       "rows": 3,
       "sha256": "<csv-sha256>",
       "schema_sha256": "<schema-sha256>",
-      "path": "runs/20260102T000000.000000Z-12345678/Ar_Activity/2026/01.csv",
+      "path": "Ar_Activity/2026/01.csv",
       "origin_run_id": "20260102T000000.000000Z-12345678"
     }
   },
   "csv_contract": {
     "encoding": "UTF-8 without BOM",
     "line_ending": "LF"
+  },
+  "status": "completed",
+  "processed_root": "C:/path/to/csv/Example Current PC",
+  "raw_config_root": "C:/path/to/archive/Example Current PC",
+  "raw_capture": {
+    "schema_version": "2.0.0",
+    "run_id": "20260102T000000.000000Z-12345678",
+    "databases": [
+      {
+        "file": "ManicTimeCore.db",
+        "bytes": 123456,
+        "sha256": "<db-sha256>",
+        "source_path": "C:/path/to/ManicTime/Data/ManicTimeCore.db",
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "completed_at": "2026-01-02T00:00:01+00:00",
+        "source_journal_mode": "wal",
+        "method": "sqlite3.Connection.backup"
+      },
+      {
+        "file": "ManicTimeReports.db",
+        "bytes": 123456,
+        "sha256": "<db-sha256>",
+        "source_path": "C:/path/to/ManicTime/Data/ManicTimeReports.db",
+        "started_at": "2026-01-02T00:00:00+00:00",
+        "completed_at": "2026-01-02T00:00:01+00:00",
+        "source_journal_mode": "wal",
+        "method": "sqlite3.Connection.backup"
+      }
+    ]
+  },
+  "effective_config": {
+    "source_path": "C:/path/to/ManicTime",
+    "device_id": "Example Current PC",
+    "raw_path": "C:/path/to/archive",
+    "processed_data_path": "C:/path/to/csv",
+    "state_path": "C:/path/to/state",
+    "backup_timeout_seconds": 300
   }
 }

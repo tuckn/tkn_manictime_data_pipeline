@@ -5,6 +5,7 @@ default_profile: current-pc
 raw_path: ~/.tkn/manictime_data_pipeline/data/raw
 # Parent folder for extracted CSV data.
 processed_data_path: ~/.tkn/manictime_data_pipeline/data/csv
+# Durable checkpoints, provenance, run records and recovery files; not disposable cache.
 # state_path defaults to ~/.tkn/manictime_data_pipeline/state
 backup_timeout_seconds: 300
 

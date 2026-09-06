@@ -4,8 +4,8 @@
 
 ManicTime の SQLite DB を変更しない Raw として保存し、再利用できる CSV を抽出する CLI です。
 初回は全期間の活動と関連テーブルを出力し、次回からは変更のあった月・テーブルだけを更新します。
-過去の Raw と CSV の版も残ります。
-v0.2 の範囲は取得・抽出・実行記録・検証です。HTML レポート、分類ルール、生成 AI の助言、
+Raw は過去の取得分も保持し、CSV は固定パスに最新データを保存します。来歴・チェックポイントは state に集約します。
+v0.3 の範囲は取得・抽出・実行記録・検証です。HTML レポート、分類ルール、生成 AI の助言、
 他ソースとの統合は今後の対象です。
 
 ## 使い方 — 最初の結果まで
@@ -67,37 +67,40 @@ tkn-manictime-pipeline verify
 
 実行結果の絶対パスは標準出力の JSON に、進捗は標準エラーに表示されます。
 
-| 保存先                                                                | 役割                                       |
-| --------------------------------------------------------------------- | ------------------------------------------ |
-| `<raw_path>/<device_id>/<run-id>/`                                          | 両 DB のスナップショットと`capture.json` |
-| `<processed_data_path>/<device_id>/pipeline-v1/current.json`        | 現在の完全なデータセットへの入口           |
-| `.../pipeline-v1/runs/<run-id>/manifest.json`                       | 全パーティションの一覧、schema、来歴       |
-| `.../pipeline-v1/runs/<run-id>/Ar_Activity/YYYY/MM.csv`             | 変更のあった活動月の新版                   |
-| `.../pipeline-v1/runs/<run-id>/<table>/all.csv`                     | 変更のあった関連・メタデータテーブルの新版 |
-| `~/.tkn/manictime_data_pipeline/state/<profile>/runs/<run-id>.json` | 実行状態、件数、失敗の記録                 |
+| 保存先 | 役割 |
+| --- | --- |
+| `<raw_path>/<device_id>/<run-id>/*.db` | 両 DB の変更しないスナップショット |
+| `<processed_data_path>/<device_id>/Ar_Activity/YYYY/MM.csv` | 各月の最新活動データ |
+| `<processed_data_path>/<device_id>/<table>/all.csv` | 関連・メタデータテーブルの最新データ |
+| `<state_path>/<profile>/current.json` | 最後に成功した実行記録を指すチェックポイント |
+| `<state_path>/<profile>/runs/<run-id>.json` | 取得来歴、schema、CSV のハッシュ・件数、実効設定、実行結果 |
+| `<state_path>/<profile>/transactions/<run-id>/` | 更新準備中の CSV、復旧用の旧 CSV、復旧手順の記録 |
 
-`current.json`、そこに記載された manifest の順に読み、
-**`manifest.artifacts` に列挙されたパスだけ**を利用します。
-パスは `pipeline-v1` 基準の相対パスです。
-未変更のファイルは以前の run を参照するため、
-`runs` 以下の CSV を再帰的にすべて結合すると旧版まで二重計上されます。
+`state_path` の既定値は `~/.tkn/manictime_data_pipeline/state` です。プロセスのロックもここに置きます。
+**state は削除可能なキャッシュではありません。Raw・CSV とともにバックアップしてください。**
+削除するとチェックポイントを失い、既存 CSV がある状態での ingest は停止します。
+新しい Raw フォルダに保存するのは DB のみです。取得時刻・入力パス・サイズ・ハッシュは実行記録に保存します。
+形式のバージョンは JSON 内に記録し、CSV のパスにはバージョンのフォルダを加えません。
 
-例えば、標準ライブラリだけで現在の活動 CSV を一覧できます。
+ingest 成功後は、Power BI や Python などから活動 CSV を直接読み込めます。
 
 ```python
-import json
 from pathlib import Path
 
-root = Path("C:/path/to/ManicTime/Example Current PC/pipeline-v1")
-pointer = json.loads((root / "current.json").read_text(encoding="utf-8"))
-manifest = json.loads((root / pointer["manifest"]).read_text(encoding="utf-8"))
-activity_csvs = [
-    root / item["path"] for item in manifest["artifacts"].values() if item["table"] == "Ar_Activity"
-]
+root = Path("C:/path/to/csv/Example Current PC")
+activity_csvs = sorted((root / "Ar_Activity").glob("*/*.csv"))
+groups_csv = root / "Ar_Group" / "all.csv"
 ```
 
-`pipeline-v1` の外にある既存の PowerShell 出力はそのまま残ります。
-自動移行・削除は行いません。
+通常のデータ利用で manifest をたどる必要はありません。来歴を調べる場合は state の
+`current.json` と、そこに記載された実行記録を読みます。artifact のパスはデバイス別 CSV フォルダ基準です。
+過去の実行記録は当時のハッシュを表しますが、そこにある固定 CSV パスの内容は最新データです。
+当時の Raw・記録した設定・対応するバージョンの抽出コードで再抽出できます。
+このバージョンには過去 CSV の復元専用コマンドはありません。
+
+CSV は **ingest の成功後**に読み込んでください。置換はファイル単位で行うため、
+更新中に複数ファイルを読むと、新旧のデータが混在する場合があります。
+旧形式のデータは後述の明示的な移行手順で扱います。
 
 ## コマンド一覧
 
@@ -108,6 +111,8 @@ activity_csvs = [
 | 入力 schema・件数・活動期間を確認          | `inspect`                 |
 | Raw 保存と CSV 差分更新                    | `ingest [--dry-run]`      |
 | 最新 CSV と対応する Raw を検証             | `verify`                  |
+| 中断した CSV 更新を復旧 | `recover [--dry-run]` |
+| v0.1/v0.2 の CSV 配置を移行 | `migrate-layout [--dry-run]` |
 
 共通オプションは `--config PATH`、`--profile NAME`、
 `-q/--quiet`、`-v/--verbose` です。
@@ -121,7 +126,8 @@ quiet でも標準出力の結果 JSON は表示されます。verbose ではエ
 
 `ingest` の created / updated / unchanged は **CSV データセット**に対する状態です。
 unchanged でも新しい Raw と実行 manifest は保存します。
-removed の件数は最新 manifest から外れたパーティション数であり、ファイル削除数ではありません。
+removed は最新一覧と固定パスの両方から削除するパーティション数です。
+削除するのは前回まで管理していた CSV のみで、入力 DB と Raw は保持します。
 
 ## 設定の詳細
 
@@ -140,7 +146,7 @@ profiles は名前、次にプロパティ単位でマージします。
 | `default_profile` | `--profile` 省略時の対象 |
 | `raw_path` | DB コピーの保存先の親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/raw` |
 | `processed_data_path` | CSV データ出力先の親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/csv` |
-| `state_path` | 実行記録の保存先。既定値は `~/.tkn/manictime_data_pipeline/state` |
+| `state_path` | チェックポイント・来歴・実行記録・復旧用データの保存先。既定値は `~/.tkn/manictime_data_pipeline/state` |
 | `backup_timeout_seconds` | DB ごとの backup の制限秒数。既定 300、整数 1～86400 |
 | `profiles.<name>.device_id` | 必須。データ保存先のサブフォルダ名。他のプロファイルと重複せず、Windows で使用できる名前 |
 | `profiles.<name>.source_path` | 必須。ManicTime 本体のフォルダまたは DB 格納フォルダ |
@@ -168,7 +174,7 @@ profiles:
 ```
 
 この例の保存先は `C:/path/to/archive/Example Historical PC/<run-id>/` と
-`C:/path/to/csv/Example Historical PC/pipeline-v1/` です。追加の `Raw` フォルダは作りません。
+`C:/path/to/csv/Example Historical PC/` です。追加の `Raw` フォルダは作りません。
 `device_id` を変更すると保存先も変わるため、既存データの表示名変更には使用しないでください。
 
 `~` は実行ユーザーのホームに展開します。
@@ -180,8 +186,8 @@ profiles:
 元のアーカイブを入力にする場合も、Raw 出力は別フォルダに指定してください。
 1回の実行では選択した1プロファイルだけを処理し、他の入力を自動取得しません。
 公開済みデータセットは、解決後の入力パス・Raw ルート・device ID と結び付きます。
-これらの変更は、後述の v0.1 から v0.2 への Raw 配置変更を除き拒否します。
-それ以外の保存先移行は別の明示的な手順として扱います。
+CSV 保存先とプロファイル名も state と結び付きます。これらの変更は拒否します。
+後述の旧形式からの明示的な移行では旧 Raw 配置を扱えます。それ以外の保存先変更は別の手順として扱います。
 
 ### Windows Task Scheduler
 
@@ -195,7 +201,8 @@ profiles:
 
 定期実行用設定のデータパスには絶対パスを推奨します。
 実行アカウントのホームが設定・state の基準になります。
-Task Scheduler は重複起動しない設定にし、CLI でも Raw と出力のルートを OS のファイルロックで保護します。
+Task Scheduler は重複起動しない設定にします。CLI は解決後の Raw・CSV 保存先ごとのロックを state に置きます。
+同じデータ保存先へ書き込む実行では、同じ `state_path` と Windows アカウントを使用してください。
 ブラウザは起動しません。このリポジトリはスケジュールを自動登録・置換・無効化しません。
 
 ## 保存・抽出・復旧の仕様
@@ -212,15 +219,16 @@ Python の [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sq
 これはデータの証跡であり、実行ファイル・設定・プラグイン・スクリーンショットも含む
 ManicTime 一式のバックアップではありません。
 
-取得開始・完了 UTC 時刻、入力パス、ファイルサイズ、SHA-256、ツール版、
+state の実行記録に、取得開始・完了 UTC 時刻、入力パス、ファイルサイズ、SHA-256、ツール版、
 SQLite journal mode、取得方法を記録し、`PRAGMA quick_check` で DB の整合性を確認します。
 入力は読み取り専用で開き、削除・上書き・vacuum・取得済み行の間引きを行いません。
 スナップショットも上書きしません。集計テーブルや内部テーブルを含む全テーブルが Raw に残ります。
 
-容量は1回ごとに両 DB の合計サイズと変更 CSV 分だけ増えます。
+Raw の容量は1回ごとに両 DB の合計サイズだけ増えます。CSV は最新分を置換します。
+更新時には変更 CSV 分の一時領域を state と CSV 保存先にも必要とします。
 例えば DB 合計 754 MB なら、日次30回で Raw は約23 GB 増えます。
-v0.2 に保持期限・cleanup コマンドはありません。CSV の旧版も保持します。
-最新 manifest が過去 run 内の未変更パーティションを参照する場合もあります。
+v0.3 に Raw の保持期限・cleanup コマンドはありません。新しい実行では公開成功後に CSV の旧版を残しません。
+過去の実行記録は state に保持します。
 
 ### 抽出対象と解釈
 
@@ -268,12 +276,12 @@ ID や変更 sequence の最大値だけに頼らず、
 古い行の修正・削除、遅れて追加された行、アイコンの変更、別月への活動移動も検出します。
 
 書き込むのは変更のあったパーティションだけです。
-更新された月は、その月全体の置換版であり、追記用の差分行ファイルではありません。
+更新された月は同じ CSV パスをその月の全行で置換します。未変更の CSV はパス・更新日時を保持します。
 変更されたテーブルは2回目の読み込みで対象パーティションを出力します。
 活動件数に比例して全行をメモリに保持する方式ではありません。
 **出力は差分更新ですが、比較のための全件読み取りは毎回行います。**
 
-完全な manifest がチェックポイントです。生成した dataset UUID を次回以降も維持し、
+state/current.json が参照する完全な実行記録がチェックポイントです。dataset UUID を次回以降も維持し、
 dataset UUID + テーブル名 + 入力の主キーでレコードを識別します。
 schema の変更では該当テーブルの出力を新版にします。
 必須テーブル・主キーの欠落、主キーのない抽出テーブル、不正な活動日時では公開を中止します。
@@ -284,24 +292,45 @@ schema の変更では該当テーブルの出力を新版にします。
 
 ### 失敗時と再実行
 
-Raw を新しい `.partial` フォルダに保存し、検証後に名前を確定します。
-次に CSV と manifest を仮配置・検証し、最後にだけ `current.json` を原子的に置換します。
-前回の Raw・CSV は残ります。この境界により、manifest に従って読む利用者へ
-途中までの出力を公開しません。
+Raw を新しい `.partial` フォルダに保存し、検証後に名前を確定します。変更 CSV はすべて
+`state/<profile>/transactions/<run-id>/new/` に生成して検証します。
+更新対象の旧 CSV を同じ実行の `old/` にコピーして検証し、復旧手順を記録してから公開を始めます。
+CSV 保存先と同じフォルダの一時ファイルを経由し、変更ファイルを1つずつ置換します。
+state と CSV が別ドライブでも同じ仕組みで動作します。
+最後に公開済み CSV を検証し、実行記録を保存して **state** の `current.json` を原子的に置換します。
+確定後、準備用・復旧用の一時データを削除します。
 
-run 作成後の失敗は `state/<profile>/runs` に記録します。
-不完全な Raw・CSV フォルダは診断用に残し、抽出が失敗しても取得済み Raw は保持します。
-再実行は新しい run として直前の成功状態と比較します。
-v0.2 は失敗 run の途中再開や残骸の自動削除を行いません。
-設定・事前検証でのエラーは run 作成前に標準エラーへ表示します。
-運用 state の最終記録に失敗しても公開済み manifest を正とし、警告を表示します。
+通常のエラーでは前回の CSV へ戻します。ファイルが開かれている、手編集されているなどの理由で
+戻せない場合は、復旧用データと手順を state に残します。プロセスの強制停止でも手順が残ります。
+次のコマンドで復旧します。
 
-終了・プロセス強制停止時には OS がロックを解放します。小さいロックファイル自体は残ります。
-強制停止では運用記録が running のまま残る場合があります。
-成功の基準は `current.json` が参照する manifest です。
-公開済み CSV が手編集・欠損していたら ingest と verify は停止します。
-バックアップから復元するか、別の processed root へ再抽出してください。強制上書きオプションはありません。
-外部の手編集・同期ソフトによる変更は CLI のプロセスロックの保護対象外です。
+```console
+tkn-manictime-pipeline recover --dry-run
+tkn-manictime-pipeline recover
+tkn-manictime-pipeline verify
+```
+
+`recover --dry-run` は保留中の実行を一覧し、書き込みません。
+`recover` は未確定の変更を元に戻し、チェックポイントが確定済みなら一時データだけを整理します。
+ハッシュを検査し、無関係な手編集を上書きしません。通常の `ingest` も次の実行を始める前に復旧します。
+読み取り専用の ingest と verify は、復旧が保留中なら停止します。抽出処理の途中再開は行いません。
+
+state への書き込みは公開の必須条件です。最初の実行記録を書けなければ Raw・CSV の保存前に停止します。
+チェックポイントが参照する確定済み実行記録は変更しません。
+未確定・中断した実行の記録は復旧時に failed とする場合があります。
+成功確定の基準は実行記録内の status 単独ではなく `current.json` です。
+抽出に失敗しても取得済み Raw は保持し、不完全な Raw も診断用に残します。
+入力・Raw の間引きは行いません。設定・事前検証のエラーは標準エラーに表示します。
+
+プロセス終了時には OS がロックを解放し、state 内の小さいロックファイルは残ります。
+同期ソフト、手編集、任意の CSV 読み込み側はこのロックに参加しません。
+固定パスの複数ファイルを一括で切り替える保証はありません。
+失敗・中断後は復旧が完了するまで CSV を利用しないでください。
+ストレージ障害などで復旧できない場合は、影響を受けたファイル・state をバックアップから戻す必要があります。
+
+管理対象 CSV の手編集・欠損、旧 `pipeline-v1` 以外にある未管理 CSV は ingest と verify を停止させます。
+未管理データは別の場所に保全し、管理対象の破損は元に戻してください。強制上書きオプションはありません。
+入力 DB は常に読み取り専用です。
 
 dry-run は稼働中 Reports DB を1つの読み取りトランザクションで読みます。
 rollback journal 方式では、この間アプリ側の書き込みが短時間待つ可能性があります。
@@ -310,29 +339,48 @@ SQLite 自身は通常のロック・共有メモリ管理を行いますが、C
 
 ## 保守・開発・検証
 
-### v0.1 からの更新
+### v0.1 / v0.2 からの更新
 
-CLI は v0.2.0、設定スキーマは 2.0.0 です。出力 manifest のスキーマは 1.0.0 を継続し、
-既存の `csv_contract.encoding` に CSV の形式を記録します。
-設定 1.0.x は意味を変えて読み込まず、移行案内を付けてエラーにします。
+CLI は v0.3.0、設定スキーマは引き続き 2.0.0、state・実行記録のスキーマは 2.0.0 です。
+v0.2 の設定値は変更不要です。デバイス別 CSV フォルダが直接の保存先になり、
+`pipeline-v1/runs/<run-id>` は付かなくなります。
 
-1. 旧版の `config show` に表示された各設定ファイルをバックアップします。未編集の旧サンプルは
-   バックアップ後に新しい同梱テンプレートへ置き換えられます。編集済みの値は保持してください。
-2. 各設定の `schema_version` を `"2.0.0"` にします。`source_path`、`device_id`、
-   `processed_data_path`、`state_path` は意図した値を保持します。共通 CSV 親フォルダの意味は変わりません。
-3. 旧 `profiles.<name>.raw_path` はデバイス別のアーカイブ先でした。末尾のフォルダが `device_id` なら、
-   新しい `raw_path` はその親を指定します。共通設定・プロファイル別指定のどちらでも同じ規則です。
-   Raw・CSV とも親フォルダを指定し、CLI が `device_id` を一度だけ追加します。
-4. 再インストール後に `config show`、`ingest --dry-run`、`ingest`、`verify` の順で確認します。
+v0.1 の設定は、`config show` に表示される読み込み元をバックアップしてから、
+`schema_version` を `"2.0.0"` にします。旧 `raw_path` の末尾が `device_id` なら、その親を指定します。
+設定スキーマ 2.0.0 では Raw・CSV とも親フォルダの指定です。他の編集済み設定は保持してください。
+未対応の 1.0.x は意味を変えて読み込まず、エラーにします。
 
-標準の旧配置では、既存 Raw は `<raw_path>/<device_id>/Raw/<run-id>/` に残し、
-次回取得分から `<raw_path>/<device_id>/<run-id>/` に保存します。Raw を移動・削除しません。
-最初の新しい ingest の前でも、旧データセットを verify できます。
-BOM を取り除くと全ファイルのハッシュが変わるため、初回更新では存在する全 CSV をBOMなしの新版にします。
-旧 BOM 付き CSV と manifest は保持し、dataset ID も維持します。
-以後は未変更の BOM なし CSV を再利用します。更新に失敗した場合は直前のデータセットが残ります。
-旧 Raw 保存先の末尾が `device_id` でない場合、この配置変更は自動適用できません。
-単に設定パスを変えて既存データが引き継がれるとは考えず、個別に移行してください。
+再インストール後に実行します。
+
+```console
+tkn-manictime-pipeline config show
+tkn-manictime-pipeline migrate-layout --dry-run
+tkn-manictime-pipeline migrate-layout
+tkn-manictime-pipeline verify
+tkn-manictime-pipeline ingest --dry-run
+```
+
+移行は `pipeline-v1/current.json` を読み、対応する CSV・Raw を検証して、
+その Raw から固定パスへ再抽出します。dataset ID を維持し、旧 manifest と取得来歴を新しい state の実行記録に含めます。
+稼働中 DB から新しい Raw は取得しません。dry-run は旧 CSV の検証と既存 CSV との衝突一覧を返し、
+Raw の完全な整合性検査と再抽出の検証は通常実行で行います。移行失敗時は新規出力を元に戻します。
+
+**既存 PowerShell 出力は上書き・削除しません。** デバイス別 CSV フォルダに存在する場合は一覧して停止します。
+新しい抽出処理を別の保存先で検証した後、既存ファイルをそのフォルダの外へ明示的に保全してから移行してください。
+利用者の管理するデータを自動移動・削除する処理はありません。
+切り替え前に、同じ CSV フォルダへ書き込む旧エクスポートの定期実行を停止してください。
+旧タスクが新しい CSV を上書きするのを防ぐためです。設定のマージ後に異なるプロファイル名へ
+同じ `device_id` が割り当てられている場合は、名前も統一します。該当する設定元は `config show` で確認できます。
+
+旧 `pipeline-v1` 出力、旧 state 記録、`capture.json`、DB は移行の証跡として変更せず残します。
+これらは新しい配置の例外となる旧データです。新規実行のフォルダ・来歴を CSV 保存先に追加することはありません。
+直接の `Ar_Activity/*/*.csv` と `<table>/all.csv` を読み、デバイスフォルダ全体の CSV を再帰結合しないでください。
+旧配置の削除・アーカイブは検証後の別作業です。
+
+v0.1 の Raw は `<raw_path>/<device_id>/Raw/<run-id>/` に残せます。
+新しい ingest では `<raw_path>/<device_id>/<run-id>/` に DB だけを保存します。
+移行時には BOM 付き CSV も BOM なし UTF-8 に変換し、値と LF のレコード区切りを保持します。
+`migrate-layout` は1回実行し、以後は通常の `ingest` で更新します。
 
 コード、同梱リソース、依存関係の更新後は再インストールします。
 
@@ -354,7 +402,8 @@ uv build
 ```
 
 テストは架空の SQLite DB で、WAL 保存、元 DB の保全、過去行の変更・削除、冪等性、
-schema 変更、出力破損、公開前の障害、ロック、設定階層の厳密な検証、
+schema 変更、出力破損、CSV 差し替え中・確定後のプロセス強制終了、復旧、旧配置との衝突、
+state の書き込み失敗、ロック、設定階層の厳密な検証、
 日本語・BLOB・NULL の CSV、標準エラーと JSON の分離を確認します。
 CLI・設定、SQLite アクセス、CSV の逐次処理、パイプラインの公開、ファイル・ログ処理に責務を分離しています。
 実データや個人情報をテストには含めません。

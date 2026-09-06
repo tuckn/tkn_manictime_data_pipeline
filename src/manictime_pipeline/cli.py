@@ -14,7 +14,7 @@ from . import __version__
 from .config import config_show, initialize_config, load_config, selected_profile
 from .database import inspect_source
 from .logging_utils import SUCCESS, configure
-from .pipeline import ingest, verify
+from .pipeline import ingest, migrate_layout, recover, verify
 
 
 def parser() -> argparse.ArgumentParser:
@@ -60,6 +60,18 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "verify", parents=[common], help="Verify published CSV against its Raw capture"
     )
+    for name, help_text in [
+        ("recover", "Restore an interrupted CSV update using the state journal"),
+        ("migrate-layout", "Copy legacy pipeline-v1 CSV into fixed paths; preserve old files"),
+    ]:
+        command = commands.add_parser(
+            name,
+            parents=[common],
+            help=help_text,
+            description=f"{help_text}. Writes by default. "
+            "Use --dry-run for a read-only preview without creating files or state.",
+        )
+        command.add_argument("--dry-run", action="store_true", help="Read-only preview; no writes")
     return root
 
 
@@ -87,6 +99,10 @@ def main(argv: list[str] | None = None) -> int:
                     result = inspect_source(profile.source_directory())
                 elif args.command == "ingest":
                     result = ingest(profile, args.dry_run)
+                elif args.command == "recover":
+                    result = recover(profile, args.dry_run)
+                elif args.command == "migrate-layout":
+                    result = migrate_layout(profile, args.dry_run)
                 else:
                     result = verify(profile)
         logging.log(SUCCESS, "%s completed", args.command)
@@ -96,5 +112,5 @@ def main(argv: list[str] | None = None) -> int:
         logging.error("%s", exc, exc_info=verbose)
         return 1
     except KeyboardInterrupt:
-        logging.error("Interrupted; the last published dataset is retained")
+        logging.error("Interrupted; run recover before reading CSV data")
         return 130
