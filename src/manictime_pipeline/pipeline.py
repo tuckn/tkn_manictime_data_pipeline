@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__
 from .config import Profile
 from .database import DB_NAMES, backup, now, quick_check, readonly, schema
-from .export import changes, export_changed, fingerprint
+from .export import BOM, changes, export_changed, fingerprint
 from .io import atomic_json, child_path, process_lock, read_json, sha256_file
 
 LOG = logging.getLogger(__name__)
@@ -37,21 +37,38 @@ def load_current(profile: Profile) -> dict | None:
         raise ValueError(
             "Dataset source_path changed; use a separate profile/device for another DB"
         )
-    if manifest.get("raw_root") != str((profile.raw_path / "Raw").resolve()):
+    csv_has_bom(manifest)
+    expected_root = str(profile.raw_directory.resolve())
+    legacy_root = str((profile.raw_directory / "Raw").resolve())
+    allowed_roots = {expected_root}
+    if manifest.get("tool_version") == "0.1.0" and csv_has_bom(manifest):
+        allowed_roots.add(legacy_root)
+    if manifest.get("raw_root") not in allowed_roots:
         raise ValueError(
             "Dataset raw_path changed; preserve its root or use a separate profile/device"
         )
     return manifest
 
 
+def csv_has_bom(manifest: dict) -> bool:
+    encoding = manifest.get("csv_contract", {}).get("encoding")
+    if encoding not in {"UTF-8 with BOM", "UTF-8 without BOM"}:
+        raise ValueError(f"Unsupported CSV encoding contract: {encoding!r}")
+    return encoding == "UTF-8 with BOM"
+
+
 def validate_artifacts(profile: Profile, manifest: dict, count_rows: bool = False) -> None:
+    has_bom = csv_has_bom(manifest)
     csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
     for key, artifact in manifest["artifacts"].items():
         path = child_path(profile.processed_path, artifact["path"])
         if not path.is_file() or sha256_file(path) != artifact["sha256"]:
             raise ValueError(f"Missing or edited output; restore it before ingest: {path}")
+        with path.open("rb") as stream:
+            if stream.read(len(BOM)).startswith(BOM) != has_bom:
+                raise ValueError(f"CSV BOM does not match its manifest: {key}")
         if count_rows:
-            with path.open(encoding="utf-8-sig", newline="") as stream:
+            with path.open(encoding="utf-8-sig" if has_bom else "utf-8", newline="") as stream:
                 reader = csv.reader(stream)
                 header = next(reader)
                 expected = [c["name"] for c in manifest["tables"][artifact["table"]]["columns"]]
@@ -96,7 +113,7 @@ def preview(profile: Profile) -> dict:
         "action": "dry_run",
         "profile": profile.name,
         "source_directory": str(directory),
-        "raw_root": str(profile.raw_path / "Raw"),
+        "raw_root": str(profile.raw_directory),
         "processed_path": str(profile.processed_path),
         "raw_databases_to_capture": len(DB_NAMES),
         "source_db_bytes": sum((directory / n).stat().st_size for n in DB_NAMES),
@@ -117,7 +134,7 @@ def ingest(profile: Profile, dry_run: bool = False) -> dict:
     if dry_run:
         return preview(profile)
     directory = profile.source_directory()
-    raw_root = profile.raw_path / "Raw"
+    raw_root = profile.raw_directory
     # Both locks are released by the OS after a crash; leftover lock files are harmless.
     with process_lock(profile.processed_path), process_lock(raw_root):
         previous = load_current(profile)
@@ -193,7 +210,7 @@ def ingest(profile: Profile, dry_run: bool = False) -> dict:
                 "tables": tables,
                 "artifacts": artifacts,
                 "csv_contract": {
-                    "encoding": "UTF-8 with BOM",
+                    "encoding": "UTF-8 without BOM",
                     "line_ending": "LF",
                     "null": r"\N",
                     "blob": r"\B followed by base64",
@@ -248,7 +265,7 @@ def verify(profile: Profile) -> dict:
         raise ValueError("No published dataset; run ingest first")
     LOG.info("Verifying CSV checksums, headers and row counts")
     validate_artifacts(profile, manifest, count_rows=True)
-    capture_path = child_path(profile.raw_path / "Raw", manifest["capture"])
+    capture_path = child_path(Path(manifest["raw_root"]), manifest["capture"])
     if sha256_file(capture_path / "capture.json") != manifest["capture_sha256"]:
         raise ValueError("Raw capture manifest checksum mismatch")
     capture = read_json(capture_path / "capture.json")
@@ -267,7 +284,7 @@ def verify(profile: Profile) -> dict:
         tables = schema(connection)
         if tables != manifest["tables"]:
             raise ValueError("Raw schema does not match published schema")
-        expected = fingerprint(connection, tables)
+        expected = fingerprint(connection, tables, utf8_bom=csv_has_bom(manifest))
     diff = changes(expected, manifest["artifacts"])
     if any(diff[k] for k in ("created", "updated", "removed")):
         raise ValueError("Published CSV dataset differs from its Raw snapshot")

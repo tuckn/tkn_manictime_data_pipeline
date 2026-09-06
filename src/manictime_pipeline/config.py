@@ -10,11 +10,14 @@ from pathlib import Path
 
 import yaml
 
-SCHEMA_VERSION = "1.0.0"
-PROFILE_KEYS = {"device_id", "source_path", "raw_path"}
+SCHEMA_VERSION = "2.0.0"
+PROFILE_KEYS = {"device_id", "source_path", "raw_path", "processed_data_path"}
+REQUIRED_PROFILE_KEYS = {"device_id", "source_path"}
+OUTPUT_KEYS = ("raw_path", "processed_data_path")
 TOP_KEYS = {
     "schema_version",
     "default_profile",
+    "raw_path",
     "processed_data_path",
     "state_path",
     "backup_timeout_seconds",
@@ -74,8 +77,12 @@ def _validate(data: object, source: Path) -> dict:
     if unknown:
         raise ValueError(f"Unknown config keys in {source}: {sorted(unknown)}")
     version = data.get("schema_version")
-    if not isinstance(version, str) or not re.fullmatch(r"1\.0\.\d+", version):
-        raise ValueError(f"Unsupported schema_version {version!r} in {source}; supported: 1.0.x")
+    if not isinstance(version, str) or not re.fullmatch(r"2\.0\.\d+", version):
+        raise ValueError(
+            f"Unsupported schema_version {version!r} in {source}; supported: 2.0.x. "
+            "For 1.0.x, follow the README upgrade instructions: raw_path now names "
+            "a parent directory shared by devices. Back up and update the config explicitly."
+        )
     for key, value in data.items():
         if key in {"schema_version", "profiles"}:
             continue
@@ -109,6 +116,11 @@ class Profile:
     state_path: Path
     backup_timeout_seconds: int
 
+    @property
+    def raw_directory(self) -> Path:
+        """Per-device capture directory; raw_path is always its parent."""
+        return self.raw_path / self.device_id
+
     def source_directory(self) -> Path:
         candidates = [
             p
@@ -129,7 +141,7 @@ class Profile:
     def validate_paths(self) -> None:
         roots = [
             p.resolve()
-            for p in (self.source_path, self.raw_path / "Raw", self.processed_path, self.state_path)
+            for p in (self.source_path, self.raw_directory, self.processed_path, self.state_path)
         ]
         for i, first in enumerate(roots):
             for second in roots[i + 1 :]:
@@ -140,6 +152,8 @@ class Profile:
 def load_config(explicit: Path | None = None, profile_name: str | None = None) -> dict:
     values = {
         "backup_timeout_seconds": 300,
+        "raw_path": str(app_root() / "data" / "raw"),
+        "processed_data_path": str(app_root() / "data" / "csv"),
         "state_path": str(app_root() / "state"),
         "profiles": {},
     }
@@ -188,11 +202,9 @@ def selected_profile(config: dict) -> Profile:
     if name not in profiles:
         raise ValueError("Configure default_profile or select an existing profile with --profile")
     p = profiles[name]
-    missing = PROFILE_KEYS - set(p)
-    if missing or "processed_data_path" not in data:
-        raise ValueError(
-            f"Configure device_id, source_path, raw_path, processed_data_path; missing: {missing}"
-        )
+    missing = REQUIRED_PROFILE_KEYS - set(p)
+    if missing:
+        raise ValueError(f"Configure profiles.{name}: missing {sorted(missing)}")
     # Prevent different profiles silently sharing the same publication directory.
     ids = [v.get("device_id", "").casefold() for v in profiles.values() if v.get("device_id")]
     if len(ids) != len(set(ids)):
@@ -201,8 +213,10 @@ def selected_profile(config: dict) -> Profile:
         name,
         p["device_id"],
         path_value(p["source_path"]),
-        path_value(p["raw_path"]),
-        path_value(data["processed_data_path"]) / p["device_id"] / "pipeline-v1",
+        path_value(p.get("raw_path", data["raw_path"])),
+        path_value(p.get("processed_data_path", data["processed_data_path"]))
+        / p["device_id"]
+        / "pipeline-v1",
         path_value(data["state_path"]) / name,
         data["backup_timeout_seconds"],
     )
@@ -213,7 +227,7 @@ def selected_profile(config: dict) -> Profile:
 def config_show(config: dict) -> dict:
     result = dict(config)
     values = dict(config["values"])
-    for key in ("state_path", "processed_data_path"):
+    for key in ("state_path", *OUTPUT_KEYS):
         if key in values:
             values[key] = str(path_value(values[key]))
     values["profiles"] = {
@@ -224,6 +238,22 @@ def config_show(config: dict) -> dict:
         for name, profile in values["profiles"].items()
     }
     result["values"] = values
+    effective = {}
+    for name, profile in values["profiles"].items():
+        entry = {key: profile.get(key, values[key]) for key in OUTPUT_KEYS}
+        entry["winning_sources"] = {
+            key: config["winning_sources"].get(
+                f"profiles.{name}.{key}", config["winning_sources"][key]
+            )
+            for key in OUTPUT_KEYS
+        }
+        if "device_id" in profile:
+            entry["raw_directory"] = str(Path(entry["raw_path"]) / profile["device_id"])
+            entry["csv_directory"] = str(
+                Path(entry["processed_data_path"]) / profile["device_id"] / "pipeline-v1"
+            )
+        effective[name] = entry
+    result["effective_profiles"] = effective
     result["user_config_path"] = str(app_root() / "config.yaml")
     return result
 

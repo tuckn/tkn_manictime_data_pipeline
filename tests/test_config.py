@@ -21,7 +21,7 @@ def isolated(tmp_path, monkeypatch):
 
 def write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"schema_version": "1.0.0", **data}), encoding="utf-8")
+    path.write_text(json.dumps({"schema_version": "2.0.0", **data}), encoding="utf-8")
 
 
 def test_layers_merge_and_show_winning_sources(isolated):
@@ -55,8 +55,8 @@ def test_layers_merge_and_show_winning_sources(isolated):
 @pytest.mark.parametrize(
     "data",
     [
-        {"schema_version": "2.0.0"},
-        {"schema_version": "1.1.0"},
+        {"schema_version": "3.0.0"},
+        {"schema_version": "2.1.0"},
         {"schema_version": 1},
         {"unknown": True},
         {"backup_timeout_seconds": True},
@@ -76,8 +76,8 @@ def test_invalid_lower_layer_is_not_hidden(isolated, data):
 
 def test_patch_version_and_missing_version(isolated):
     cwd, home = isolated
-    write(home / "config.yaml", {"schema_version": "1.0.5"})
-    assert load_config()["sources"][0]["schema_version"] == "1.0.5"
+    write(home / "config.yaml", {"schema_version": "2.0.5"})
+    assert load_config()["sources"][0]["schema_version"] == "2.0.5"
     (home / "config.yaml").write_text("default_profile: pc\n", encoding="utf-8")
     with pytest.raises(ValueError, match="schema_version"):
         load_config()
@@ -86,8 +86,8 @@ def test_patch_version_and_missing_version(isolated):
 @pytest.mark.parametrize(
     "text",
     [
-        'schema_version: "1.0.0"\ndefault_profile: a\ndefault_profile: b\n',
-        'schema_version: "1.0.0"\nprofiles:\n  a:\n    device_id: x\n    device_id: y\n',
+        'schema_version: "2.0.0"\ndefault_profile: a\ndefault_profile: b\n',
+        'schema_version: "2.0.0"\nprofiles:\n  a:\n    device_id: x\n    device_id: y\n',
     ],
 )
 def test_duplicate_yaml_keys(isolated, text):

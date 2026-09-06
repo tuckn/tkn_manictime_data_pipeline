@@ -5,7 +5,7 @@
 ManicTime の SQLite DB を変更しない Raw として保存し、再利用できる CSV を抽出する CLI です。
 初回は全期間の活動と関連テーブルを出力し、次回からは変更のあった月・テーブルだけを更新します。
 過去の Raw と CSV の版も残ります。
-v0.1 の範囲は取得・抽出・実行記録・検証です。HTML レポート、分類ルール、生成 AI の助言、
+v0.2 の範囲は取得・抽出・実行記録・検証です。HTML レポート、分類ルール、生成 AI の助言、
 他ソースとの統合は今後の対象です。
 
 ## 使い方 — 最初の結果まで
@@ -19,6 +19,8 @@ v0.1 の範囲は取得・抽出・実行記録・検証です。HTML レポー�
 | `verify` | CSV・Raw のハッシュと、Raw に対する CSV の一致の検証        |
 
 ### 必要環境とインストール
+
+**動作確認環境：ManicTime 2023.1.1.0（64-bit）、Standard（無料版）。**
 
 Python 3.11 以上と標準の `sqlite3` モジュール、uv を使用します。Windows を主な検証対象としています。
 システムの `sqlite3.exe`、起動中の ManicTime UI は不要です。
@@ -35,13 +37,19 @@ tkn-manictime-pipeline config init
 
 表示された `~/.tkn/manictime_data_pipeline/config.yaml` を編集します。
 
-- `profiles.current-pc.source_path`: `Data` を含む ManicTime ルート、または DB のあるフォルダ。
-- `profiles.current-pc.raw_path`: このデバイスのアーカイブ先。入力とは別のフォルダにします。
-- `processed_data_path`: ManicTime の sourceAligned ルート。
-- `profiles.current-pc.device_id`: 重複しない、継続して使用するデバイス・データセットのフォルダ名。
+- `profiles.current-pc.source_path`: `Data` を含む ManicTime 本体のフォルダ、または DB 格納フォルダ。
+- `profiles.current-pc.device_id`: データ保存先のサブフォルダ名に使用する、他のプロファイルと重複しない名前。
+- `raw_path`: ManicTime の DB コピーを保存する親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/raw`。
+- `processed_data_path`: 抽出した CSV データを保存する親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/csv`。
+
+既定の保存先を使う場合、最初に変更するのは `source_path` と `device_id` だけです。
+両方の保存先は共通設定で、必要なプロファイルだけ個別に上書きできます。
+どちらも CLI が親フォルダの下へ `device_id` を一度だけ追加するため、保存先の設定には含めません。
 
 入力には `ManicTimeCore.db` と `ManicTimeReports.db` の両方が必要です。
-稼働中の入力の下にアーカイブ・出力・state を配置しないでください。
+Raw・CSV・実行記録の保存先は、`source_path` に指定したフォルダの外にしてください。
+ManicTime 本体のフォルダを指定した場合は本体フォルダ、DB 格納フォルダを直接指定した場合は
+そのフォルダの外を意味します。入力と出力のフォルダを互いに包含する配置もできません。
 [同梱の設定例](src/manictime_pipeline/resources/config.example.yaml)に初期設定全体があります。
 
 ```console
@@ -61,7 +69,7 @@ tkn-manictime-pipeline verify
 
 | 保存先                                                                | 役割                                       |
 | --------------------------------------------------------------------- | ------------------------------------------ |
-| `<raw_path>/Raw/<run-id>/`                                          | 両 DB のスナップショットと`capture.json` |
+| `<raw_path>/<device_id>/<run-id>/`                                          | 両 DB のスナップショットと`capture.json` |
 | `<processed_data_path>/<device_id>/pipeline-v1/current.json`        | 現在の完全なデータセットへの入口           |
 | `.../pipeline-v1/runs/<run-id>/manifest.json`                       | 全パーティションの一覧、schema、来歴       |
 | `.../pipeline-v1/runs/<run-id>/Ar_Activity/YYYY/MM.csv`             | 変更のあった活動月の新版                   |
@@ -117,7 +125,7 @@ removed の件数は最新 manifest から外れたパーティション数で�
 
 ## 設定の詳細
 
-各 YAML は `schema_version: "1.0.0"` を持ちます。1.0.x に対応し、
+各 YAML は `schema_version: "2.0.0"` を持ちます。2.0.x に対応し、
 未対応の major/minor、キーの重複・未知キー、型の不一致はエラーにします。
 各設定元をマージ前に検証するため、上位設定で下位設定の誤りを隠すことはできません。
 
@@ -127,15 +135,41 @@ profiles は名前、次にプロパティ単位でマージします。
 `config show` には各入力の schema version、内部 schema version、解決後のパス、
 値ごとの設定元を表示します。読み込みで設定を書き換えません。
 
-| キー                            | 意味                                                 |
-| ------------------------------- | ---------------------------------------------------- |
-| `default_profile`             | `--profile` 省略時の対象                           |
-| `processed_data_path`         | 必須。sourceAligned のルート                         |
-| `state_path`                  | 省略時は`~/.tkn/manictime_data_pipeline/state`     |
-| `backup_timeout_seconds`      | DB ごとの backup の制限秒数。既定 300、整数 1～86400 |
-| `profiles.<name>.device_id`   | 必須。重複しない Windows で使用できるフォルダ名      |
-| `profiles.<name>.source_path` | 必須。入力 DB フォルダまたはアプリルート             |
-| `profiles.<name>.raw_path`    | 必須。保存先。CLI が`Raw/<run-id>` を追加          |
+| キー | 意味 |
+| --- | --- |
+| `default_profile` | `--profile` 省略時の対象 |
+| `raw_path` | DB コピーの保存先の親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/raw` |
+| `processed_data_path` | CSV データ出力先の親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/csv` |
+| `state_path` | 実行記録の保存先。既定値は `~/.tkn/manictime_data_pipeline/state` |
+| `backup_timeout_seconds` | DB ごとの backup の制限秒数。既定 300、整数 1～86400 |
+| `profiles.<name>.device_id` | 必須。データ保存先のサブフォルダ名。他のプロファイルと重複せず、Windows で使用できる名前 |
+| `profiles.<name>.source_path` | 必須。ManicTime 本体のフォルダまたは DB 格納フォルダ |
+| `profiles.<name>.raw_path` | 任意。共通の DB 保存先の親フォルダを上書き |
+| `profiles.<name>.processed_data_path` | 任意。共通の CSV 保存先の親フォルダを上書き |
+
+保存先ごとに、プロファイルの指定があればその値、なければ共通設定を使います。
+下位の設定ファイルでプロファイル別に指定した値は、上位ファイルの共通設定より優先します。
+変更する場合は上位ファイルでもそのプロファイルの値を指定します。
+共通設定も省略した場合は、組み込みの既定値を使います。
+`config show` の `effective_profiles` には、継承・上書き後の親フォルダ、実際のデバイス別保存先、
+それぞれの親フォルダを決めた設定元を表示します。
+
+例えば、過去 PC だけ別の保存先を指定し、他のプロファイルには既定値を使用できます。
+
+```yaml
+schema_version: "2.0.0"
+default_profile: historical-pc
+profiles:
+  historical-pc:
+    device_id: Example Historical PC
+    source_path: C:/path/to/historical/ManicTime
+    raw_path: C:/path/to/archive
+    processed_data_path: C:/path/to/csv
+```
+
+この例の保存先は `C:/path/to/archive/Example Historical PC/<run-id>/` と
+`C:/path/to/csv/Example Historical PC/pipeline-v1/` です。追加の `Raw` フォルダは作りません。
+`device_id` を変更すると保存先も変わるため、既存データの表示名変更には使用しないでください。
 
 `~` は実行ユーザーのホームに展開します。
 相対パスは、どの設定元でも YAML の場所ではなく実行時のカレントディレクトリを基準にします。
@@ -146,7 +180,8 @@ profiles は名前、次にプロパティ単位でマージします。
 元のアーカイブを入力にする場合も、Raw 出力は別フォルダに指定してください。
 1回の実行では選択した1プロファイルだけを処理し、他の入力を自動取得しません。
 公開済みデータセットは、解決後の入力パス・Raw ルート・device ID と結び付きます。
-これらの変更は拒否します。保存先の移行は別の明示的な手順として扱います。
+これらの変更は、後述の v0.1 から v0.2 への Raw 配置変更を除き拒否します。
+それ以外の保存先移行は別の明示的な手順として扱います。
 
 ### Windows Task Scheduler
 
@@ -184,7 +219,7 @@ SQLite journal mode、取得方法を記録し、`PRAGMA quick_check` で DB の
 
 容量は1回ごとに両 DB の合計サイズと変更 CSV 分だけ増えます。
 例えば DB 合計 754 MB なら、日次30回で Raw は約23 GB 増えます。
-v0.1 に保持期限・cleanup コマンドはありません。CSV の旧版も保持します。
+v0.2 に保持期限・cleanup コマンドはありません。CSV の旧版も保持します。
 最新 manifest が過去 run 内の未変更パーティションを参照する場合もあります。
 
 ### 抽出対象と解釈
@@ -216,10 +251,11 @@ Reports DB の非集計 `Ar_*` テーブルを対象とし、末尾が `ByHour`�
 推測した timezone や offset を加えません。
 manifest の時刻は offset 付き ISO 8601 UTC です。
 
-CSV は UTF-8 BOM、カンマ区切り、LF、ヘッダー付きで、カンマ・引用符・改行を CSV の引用規則で保存します。
+CSV は BOM なし UTF-8、カンマ区切り、LF、ヘッダー付きで、カンマ・引用符・改行を CSV の引用規則で保存します。
 数値は入力の表現を使用します。SQL null は `\N`、BLOB は `\B` の後に base64、
 先頭がバックスラッシュの文字列は先頭にバックスラッシュを1つ追加します。
 空文字・null・バイナリ・マーカーと同じ文字列を区別できます。
+LF は CSV レコードの区切りです。元の値の中にある CR・LF・CRLF は、引用したうえで保持します。
 `manictime_pipeline.export.decode_cell` でマーカーを復号できます。
 タイトルは原文を保持するため、表計算ソフトではデータ・文字列として取り込んでください。
 数式と解釈され得る文字列もそのまま残っています。
@@ -256,7 +292,7 @@ Raw を新しい `.partial` フォルダに保存し、検証後に名前を確�
 run 作成後の失敗は `state/<profile>/runs` に記録します。
 不完全な Raw・CSV フォルダは診断用に残し、抽出が失敗しても取得済み Raw は保持します。
 再実行は新しい run として直前の成功状態と比較します。
-v0.1 は失敗 run の途中再開や残骸の自動削除を行いません。
+v0.2 は失敗 run の途中再開や残骸の自動削除を行いません。
 設定・事前検証でのエラーは run 作成前に標準エラーへ表示します。
 運用 state の最終記録に失敗しても公開済み manifest を正とし、警告を表示します。
 
@@ -273,6 +309,30 @@ backup と整合性検査は省くため、出力先の権限・空き容量・b
 SQLite 自身は通常のロック・共有メモリ管理を行いますが、CLI は入力への書き込み SQL を実行しません。
 
 ## 保守・開発・検証
+
+### v0.1 からの更新
+
+CLI は v0.2.0、設定スキーマは 2.0.0 です。出力 manifest のスキーマは 1.0.0 を継続し、
+既存の `csv_contract.encoding` に CSV の形式を記録します。
+設定 1.0.x は意味を変えて読み込まず、移行案内を付けてエラーにします。
+
+1. 旧版の `config show` に表示された各設定ファイルをバックアップします。未編集の旧サンプルは
+   バックアップ後に新しい同梱テンプレートへ置き換えられます。編集済みの値は保持してください。
+2. 各設定の `schema_version` を `"2.0.0"` にします。`source_path`、`device_id`、
+   `processed_data_path`、`state_path` は意図した値を保持します。共通 CSV 親フォルダの意味は変わりません。
+3. 旧 `profiles.<name>.raw_path` はデバイス別のアーカイブ先でした。末尾のフォルダが `device_id` なら、
+   新しい `raw_path` はその親を指定します。共通設定・プロファイル別指定のどちらでも同じ規則です。
+   Raw・CSV とも親フォルダを指定し、CLI が `device_id` を一度だけ追加します。
+4. 再インストール後に `config show`、`ingest --dry-run`、`ingest`、`verify` の順で確認します。
+
+標準の旧配置では、既存 Raw は `<raw_path>/<device_id>/Raw/<run-id>/` に残し、
+次回取得分から `<raw_path>/<device_id>/<run-id>/` に保存します。Raw を移動・削除しません。
+最初の新しい ingest の前でも、旧データセットを verify できます。
+BOM を取り除くと全ファイルのハッシュが変わるため、初回更新では存在する全 CSV をBOMなしの新版にします。
+旧 BOM 付き CSV と manifest は保持し、dataset ID も維持します。
+以後は未変更の BOM なし CSV を再利用します。更新に失敗した場合は直前のデータセットが残ります。
+旧 Raw 保存先の末尾が `device_id` でない場合、この配置変更は自動適用できません。
+単に設定パスを変えて既存データが引き継がれるとは考えず、個別に移行してください。
 
 コード、同梱リソース、依存関係の更新後は再インストールします。
 

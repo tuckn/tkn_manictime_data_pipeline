@@ -47,13 +47,14 @@ def parser() -> argparse.ArgumentParser:
         "ingest",
         parents=[common],
         help="Save new Raw snapshots and publish changed CSV partitions (writes by default)",
-        description="Save both DBs with SQLite online backup, then publish changed CSV partitions. "
+        description="Save both DBs with SQLite online backup, then publish changed "
+        "BOM-free UTF-8/LF CSV partitions. "
         "No source deletion, networking, AI, external sqlite3 or browser launch.",
     )
     run.add_argument(
         "--dry-run",
         action="store_true",
-        help="Compare DB/state read-only; no backup, quick_check or file writes; "
+        help="Compare DB/state read-only; no backup, quick_check, file writes, "
         "cache, persistent temp, networking or AI. Scans all selected source tables.",
     )
     commands.add_parser(

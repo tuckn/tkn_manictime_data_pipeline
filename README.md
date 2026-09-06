@@ -5,7 +5,7 @@
 Save ManicTime's SQLite databases as immutable Raw captures and export reusable CSV.
 The first run exports all available activity history and related tables; later runs
 publish only changed month/table partitions. Old captures and CSV versions remain
-available. Version 0.1 covers acquisition, extraction, execution records and verification;
+available. Version 0.2 covers acquisition, extraction, execution records and verification;
 HTML reports, classification rules, AI advice and cross-source integration are future work.
 
 ## Use it — from installation to the first result
@@ -21,8 +21,11 @@ output without writing pipeline data, configuration, state, cache or temporary f
 ### Requirements and installation
 
 Use Python 3.11+ with its standard `sqlite3` module and uv. Windows is the primary
-tested environment. There is no dependency on a system `sqlite3.exe`, running ManicTime UI. PyYAML is installed with the package. The CLI operates
-locally without network access or AI calls.
+tested environment. There is no dependency on a system `sqlite3.exe` or a running
+ManicTime UI. PyYAML is installed with the package. The CLI operates locally without
+network access or AI calls.
+
+**Tested with ManicTime 2023.1.1.0 (64-bit), Standard (free edition).**
 
 Replace the example repository path with your checkout:
 
@@ -35,13 +38,19 @@ tkn-manictime-pipeline config init
 
 Edit the displayed `~/.tkn/manictime_data_pipeline/config.yaml`:
 
-- `profiles.current-pc.source_path`: the ManicTime root containing `Data`, or the DB directory itself.
-- `profiles.current-pc.raw_path`: a separate archive directory for this device.
-- `processed_data_path`: your ManicTime sourceAligned root.
-- `profiles.current-pc.device_id`: a unique, stable device/dataset directory name.
+- `profiles.current-pc.source_path`: the ManicTime application folder containing `Data`, or the DB folder itself.
+- `profiles.current-pc.device_id`: a name used for the data subfolder; it must be unique across profiles.
+- `raw_path`: parent folder for saved copies of the ManicTime databases. Defaults to `~/.tkn/manictime_data_pipeline/data/raw`.
+- `processed_data_path`: parent folder for extracted CSV data. Defaults to `~/.tkn/manictime_data_pipeline/data/csv`.
+
+Only `source_path` and `device_id` need to be customized to start with the default output folders.
+Both output paths are common settings, with optional per-profile overrides using the same rules.
+The CLI appends `device_id` once to either parent path; do not include it yourself.
 
 Both `ManicTimeCore.db` and `ManicTimeReports.db` must be present.
-Do not put an archive/output/state directory inside the live source.
+Keep Raw, CSV and execution-record folders outside the folder specified by `source_path`.
+That is the ManicTime application folder when you specify the application root, or the DB
+folder when you specify it directly. Input and output folders must not contain one another.
 The packaged [configuration example](src/manictime_pipeline/resources/config.example.yaml)
 contains the complete initial configuration.
 
@@ -62,7 +71,7 @@ The command returns absolute output paths as JSON on stdout and progress on stde
 
 | Location                                                              | Purpose                                           |
 | --------------------------------------------------------------------- | ------------------------------------------------- |
-| `<raw_path>/Raw/<run-id>/`                                          | Both DB snapshots plus`capture.json`            |
+| `<raw_path>/<device_id>/<run-id>/`                                          | Both DB snapshots plus`capture.json`            |
 | `<processed_data_path>/<device_id>/pipeline-v1/current.json`        | Entry point to the current complete dataset       |
 | `.../pipeline-v1/runs/<run-id>/manifest.json`                       | Complete partition index, schema and provenance   |
 | `.../pipeline-v1/runs/<run-id>/Ar_Activity/YYYY/MM.csv`             | New versions of changed activity months           |
@@ -118,7 +127,7 @@ Even an unchanged run saves a new Raw capture and execution manifest.
 
 ## Configuration details
 
-Each YAML file must declare `schema_version: "1.0.0"`. Version 1.0.x is accepted;
+Each YAML file must declare `schema_version: "2.0.0"`. Version 2.0.x is accepted;
 unsupported major/minor versions, duplicate/unknown keys and incorrect types are errors.
 Each layer is validated before merging, so a higher layer cannot hide an invalid lower layer.
 
@@ -127,15 +136,41 @@ Precedence is built-in defaults → user config → current directory's `.tkn/co
 `config show` includes source versions, the effective schema version, resolved paths and
 the source that supplied each value. No configuration file is written while reading it.
 
-| Key                             | Meaning                                                       |
-| ------------------------------- | ------------------------------------------------------------- |
-| `default_profile`             | Profile used unless`--profile` is supplied                  |
-| `processed_data_path`         | Required sourceAligned root                                   |
-| `state_path`                  | Optional; defaults to`~/.tkn/manictime_data_pipeline/state` |
-| `backup_timeout_seconds`      | Per-DB online-backup timeout; default 300, integer 1–86400   |
-| `profiles.<name>.device_id`   | Required unique Windows-safe directory name                   |
-| `profiles.<name>.source_path` | Required source directory or application root                 |
-| `profiles.<name>.raw_path`    | Required archive parent; the CLI adds`Raw/<run-id>`         |
+| Key | Meaning |
+| --- | --- |
+| `default_profile` | Profile used unless `--profile` is supplied |
+| `raw_path` | Parent folder for DB copies; default `~/.tkn/manictime_data_pipeline/data/raw` |
+| `processed_data_path` | Parent folder for extracted CSV data; default `~/.tkn/manictime_data_pipeline/data/csv` |
+| `state_path` | Execution records; default `~/.tkn/manictime_data_pipeline/state` |
+| `backup_timeout_seconds` | Per-DB backup timeout; default 300, integer 1–86400 |
+| `profiles.<name>.device_id` | Required name used for the data subfolder; unique across profiles and valid on Windows |
+| `profiles.<name>.source_path` | Required ManicTime application folder or DB folder |
+| `profiles.<name>.raw_path` | Optional override of the common DB-copy parent folder |
+| `profiles.<name>.processed_data_path` | Optional override of the common CSV parent folder |
+
+For each output path, a profile override takes precedence over the common setting; otherwise
+the common value is used. This also applies when a lower-priority file sets a profile override
+and a higher-priority file changes the common value. Set that profile's value in the higher
+file to override it. Omitted common values use the built-in defaults.
+`config show` includes `effective_profiles`, showing the inherited/overridden parent folders,
+actual per-device output folders and the source that supplied each parent value.
+
+For example, a historical profile can use separate parents while other profiles use the defaults:
+
+```yaml
+schema_version: "2.0.0"
+default_profile: historical-pc
+profiles:
+  historical-pc:
+    device_id: Example Historical PC
+    source_path: C:/path/to/historical/ManicTime
+    raw_path: C:/path/to/archive
+    processed_data_path: C:/path/to/csv
+```
+
+The paths above produce `C:/path/to/archive/Example Historical PC/<run-id>/` and
+`C:/path/to/csv/Example Historical PC/pipeline-v1/`. There is no additional `Raw` folder.
+Changing `device_id` changes the output folder; do not rename it to relabel existing data.
 
 `~` expands to the current user's home. Relative paths in every layer resolve from
 the execution working directory, not the YAML file's directory. An installed CLI does not
@@ -146,7 +181,8 @@ Add a separate named profile with a distinct `device_id` for a historical DB.
 Choose a Raw destination separate from the archived input directory.
 Only one selected profile runs per invocation; other sources are not automatically ingested.
 A published dataset is bound to its resolved source path, Raw root and device ID.
-Changing those bindings is rejected; storage migration requires a separate deliberate procedure.
+Changing those bindings is rejected, except for the documented v0.1-to-v0.2 Raw layout
+transition below. Other storage migrations require a separate deliberate procedure.
 
 ### Task Scheduler
 
@@ -183,7 +219,7 @@ All tables, including internal and aggregate tables, remain in Raw.
 
 Storage grows by approximately the combined DB sizes per run, plus changed CSV partitions.
 For example, two DBs totalling 754 MB add about 23 GB of Raw over 30 daily runs.
-No retention/cleanup command is included in v0.1. Historical CSV files are also retained;
+No retention/cleanup command is included in v0.2. Historical CSV files are also retained;
 older runs may still contain partitions referenced by the current manifest.
 
 ### What is extracted
@@ -215,9 +251,10 @@ empty metadata tables have a header-only CSV. Source `*UtcTime` columns represen
 without inventing an IANA timezone or adding an inferred offset.
 Manifest timestamps are offset-qualified ISO 8601 UTC.
 
-CSV uses UTF-8 BOM, comma separators, LF, headers and CSV quoting for commas/quotes/newlines.
+CSV uses UTF-8 without BOM, comma separators, LF, headers and CSV quoting for commas/quotes/newlines.
 Numbers use their source representation. SQL null is `\N`; BLOB is `\B` followed by
 base64; a text value beginning with backslash receives one extra leading backslash.
+LF terminates CSV records; CR, LF and CRLF inside source values are preserved and quoted.
 Empty string, null, bytes and literal marker text therefore remain distinct.
 `manictime_pipeline.export.decode_cell` decodes these markers.
 Import CSV columns as data/text in spreadsheets: source titles are preserved literally,
@@ -255,7 +292,7 @@ This commit boundary prevents readers using the manifest from seeing a half-publ
 Failures after run creation are recorded under `state/<profile>/runs`.
 A failed/incomplete Raw or export directory is retained for diagnosis. Completed Raw remains
 available even if extraction fails. A retry creates a new run and compares against the last
-success; v0.1 does not resume partway through a failed capture or delete leftovers.
+success; v0.2 does not resume partway through a failed capture or delete leftovers.
 Configuration/preflight failures are reported on stderr before a run is created.
 Operational state is supplementary: if its final write fails, the published manifest
 remains authoritative and the CLI warns.
@@ -273,6 +310,30 @@ destination permissions, free space or successful backup. SQLite itself manages 
 normal locking/shared-memory facilities; the pipeline issues no source write statements.
 
 ## Maintenance and development
+
+### Upgrade from v0.1
+
+The application is v0.2.0 and the configuration schema is 2.0.0. The output manifest
+schema remains 1.0.0: its existing `csv_contract.encoding` field identifies the CSV format.
+Version 1.0.x configurations are rejected with upgrade instructions rather than reinterpreted.
+
+1. Back up every loaded config file shown by the old `config show`. An unchanged old sample
+   can be replaced with the new packaged template after backing it up; preserve your edits.
+2. Set each config's `schema_version` to `"2.0.0"`. Keep `source_path`, `device_id`,
+   `processed_data_path` and `state_path` as intended. The old common CSV parent has the same meaning.
+3. Old `profiles.<name>.raw_path` named a per-device archive directory. Set the new
+   `raw_path` to its parent if its last folder is `device_id`. It may be common or per-profile.
+   Both Raw and CSV paths now name parents, and the CLI appends `device_id` once.
+4. Reinstall, then run `config show`, `ingest --dry-run`, `ingest` and `verify`.
+
+For the standard v0.1 layout, old captures remain at `<raw_path>/<device_id>/Raw/<run-id>/`;
+new captures go to `<raw_path>/<device_id>/<run-id>/`. No Raw files are moved or deleted.
+The old current dataset remains verifiable before the first new ingest. The first update
+writes BOM-free versions of all present CSV partitions, because removing BOM changes every
+file hash. Old BOM CSVs and manifests remain untouched, and dataset identity is preserved.
+Later runs reuse unchanged BOM-free CSVs. A failed update retains the previous current dataset.
+If the old Raw archive folder does not end in `device_id`, this automatic layout transition
+does not apply; do not merely change the path and expect existing data to be adopted.
 
 After changing source, packaged resources or dependencies:
 

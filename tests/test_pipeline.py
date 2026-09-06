@@ -27,14 +27,14 @@ def test_initial_export_raw_and_roundtrip(profile):
     assert "Ar_ApplicationByDay" not in current["tables"]
     assert len(current["artifacts"]) == 7
     groups = current["artifacts"]["Ar_Group/all"]
-    with (profile.processed_path / groups["path"]).open(encoding="utf-8-sig", newline="") as f:
+    with (profile.processed_path / groups["path"]).open(encoding="utf-8", newline="") as f:
         assert decode_cell(next(csv.DictReader(f))["Icon16"]) == b"\x00\x80\xff"
     january = current["artifacts"]["Ar_Activity/2026/01"]
-    with (profile.processed_path / january["path"]).open(encoding="utf-8-sig", newline="") as f:
+    with (profile.processed_path / january["path"]).open(encoding="utf-8", newline="") as f:
         row = next(csv.DictReader(f))
         assert row["Name"] == '日本語 "title",\nsecond line'
         assert decode_cell(row["Other"]) is None
-    assert (profile.raw_path / "Raw" / result["run_id"] / "ManicTimeCore.db").is_file()
+    assert (profile.raw_directory / result["run_id"] / "ManicTimeCore.db").is_file()
 
 
 def test_unchanged_reuses_artifacts_and_retains_new_capture(profile):
@@ -158,7 +158,7 @@ def test_invalid_timestamp_keeps_raw_and_previous_output(profile):
     with pytest.raises(ValueError, match="StartLocalTime"):
         ingest(profile)
     assert (profile.processed_path / "current.json").read_bytes() == before
-    assert len(list((profile.raw_path / "Raw").glob("*/capture.json"))) == 2
+    assert len(list((profile.raw_directory).glob("*/capture.json"))) == 2
 
 
 def test_source_change_refused(profile, tmp_path):
@@ -210,7 +210,7 @@ def test_process_lock_and_release(profile):
 
 def test_raw_corruption_detected(profile):
     result = ingest(profile)
-    target = profile.raw_path / "Raw" / result["run_id"] / "ManicTimeCore.db"
+    target = profile.raw_directory / result["run_id"] / "ManicTimeCore.db"
     with target.open("ab") as stream:
         stream.write(b"changed")
     with pytest.raises(ValueError, match="checksum"):

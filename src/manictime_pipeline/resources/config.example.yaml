@@ -1,13 +1,18 @@
-schema_version: "1.0.0"
+schema_version: "2.0.0"
 default_profile: current-pc
-processed_data_path: C:/path/to/data/sourceAligned/activities/deviceUsage/ManicTime
+
+# Parent folder for saved copies of the ManicTime databases.
+raw_path: ~/.tkn/manictime_data_pipeline/data/raw
+# Parent folder for extracted CSV data.
+processed_data_path: ~/.tkn/manictime_data_pipeline/data/csv
 # state_path defaults to ~/.tkn/manictime_data_pipeline/state
 backup_timeout_seconds: 300
 
 profiles:
   current-pc:
+    # Used as the data subfolder name; must be unique across profiles.
     device_id: Example Current PC
-    # Either the application root (containing Data) or the DB directory.
+    # Either the ManicTime application folder (containing Data) or the DB folder.
     source_path: C:/path/to/ManicTime
-    # A new Raw/<run-id> folder is added on each successful capture.
-    raw_path: C:/path/to/sources/softwares/ManicTime/Example Current PC
+    # Optional raw_path and processed_data_path overrides use the same parent-folder rule.
+    # The CLI appends device_id once; do not include it in either parent path.

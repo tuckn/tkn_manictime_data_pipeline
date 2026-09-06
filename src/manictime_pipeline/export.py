@@ -68,14 +68,14 @@ def partition(table: str, row, columns: list[str]) -> str:
     return f"{table}/{value[:4]}/{value[5:7]}"
 
 
-def fingerprint(connection, tables: dict) -> dict:
+def fingerprint(connection, tables: dict, *, utf8_bom: bool = False) -> dict:
     """Scan all rows so old edits and deletions cannot hide below an ID watermark."""
     result = {}
     encoder = CsvEncoder()
     for table, spec in tables.items():
         LOG.info("Comparing %s", table)
         columns = [c["name"] for c in spec["columns"]]
-        header = BOM + encoder.row(columns)
+        header = (BOM if utf8_bom else b"") + encoder.row(columns)
         partitions = {}
         total = 0
         for row in rows(connection, table, spec):
@@ -129,7 +129,7 @@ def export_changed(connection, tables: dict, fingerprints: dict, selected: set, 
         path.parent.mkdir(parents=True, exist_ok=True)
         spec = tables[fingerprints[key]["table"]]
         with path.open("xb") as stream:
-            stream.write(BOM + encoder.row([c["name"] for c in spec["columns"]]))
+            stream.write(encoder.row([c["name"] for c in spec["columns"]]))
     try:
         for table in sorted({fingerprints[k]["table"] for k in selected}):
             LOG.info("Exporting changed partitions of %s", table)
