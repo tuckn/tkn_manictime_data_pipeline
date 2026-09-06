@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 
 import pytest
@@ -70,4 +71,14 @@ def profile(tmp_path):
         tmp_path / "processed" / "Test PC",
         tmp_path / "state" / "test",
         10,
+        100,  # These extraction fixtures intentionally exercise deletions; guard tests set 10.
     )
+
+
+@pytest.fixture(autouse=True)
+def restore_logging_after_cli_tests():
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    yield
+    root.handlers = handlers
+    root.setLevel(level)

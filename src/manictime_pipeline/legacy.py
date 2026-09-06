@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 from .config import Profile
-from .database import DB_NAMES, quick_check, readonly, schema
+from .database import DB_NAMES, quick_check, schema
+from .database import readonly_snapshot as readonly
 from .export import BOM, changes, fingerprint
 from .io import child_path, read_json, sha256_file
 

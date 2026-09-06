@@ -23,22 +23,41 @@ LOG = logging.getLogger(__name__)
 
 
 def now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 def quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def check_snapshot_sidecars(path: Path) -> None:
+    for suffix in ("-wal", "-shm", "-journal"):
+        if Path(str(path) + suffix).exists():
+            raise ValueError(
+                f"Unexpected SQLite sidecar beside Raw; close external readers/writers "
+                f"and inspect before continuing: {path}{suffix}"
+            )
+
+
 @contextmanager
-def readonly(path: Path):
-    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+def readonly(path: Path, *, snapshot: bool = False):
+    uri = path.resolve().as_uri() + "?mode=ro"
+    if snapshot:
+        check_snapshot_sidecars(path)
+        # Only completed backup copies are immutable while open. Never use for a live source.
+        uri += "&immutable=1"
+    connection = sqlite3.connect(uri, uri=True, timeout=5)
     try:
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA temp_store=MEMORY")
         yield connection
     finally:
         connection.close()
+
+
+def readonly_snapshot(path: Path):
+    """Read a completed, standalone Raw DB without creating WAL/shared-memory files."""
+    return readonly(path, snapshot=True)
 
 
 def quick_check(connection: sqlite3.Connection) -> None:

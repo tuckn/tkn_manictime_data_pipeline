@@ -44,7 +44,9 @@ if boundary == 'commit':
 else:
     original = transaction.apply
     def stop(profile, folder, journal):
-        original(profile, folder, {**journal, 'operations': journal['operations'][:int(boundary)]})
+        ops = [op for op in journal['operations'] if op.get('storage') == 'raw']
+        ops += [op for op in journal['operations'] if op.get('storage') != 'raw'][:int(boundary)]
+        original(profile, folder, {**journal, 'operations': ops})
         os._exit(71)
     transaction.apply = stop
 pipeline.ingest(profile)
@@ -67,10 +69,10 @@ pipeline.ingest(profile)
 
 
 def test_data_folders_only_contain_data_and_unchanged_csv_is_not_rewritten(profile):
-    first = ingest(profile)
+    ingest(profile)
     csvs = list(profile.processed_path.rglob("*"))
     assert all(p.suffix == ".csv" for p in csvs if p.is_file())
-    assert set(files(profile.raw_directory / first["run_id"])) == {
+    assert set(files(profile.raw_directory)) == {
         "ManicTimeCore.db",
         "ManicTimeReports.db",
     }
@@ -89,6 +91,7 @@ def test_data_folders_only_contain_data_and_unchanged_csv_is_not_rewritten(profi
 def test_process_death_rolls_back_deleted_updated_and_created_partitions(profile, boundary):
     ingest(profile)
     before = files(profile.processed_path)
+    raw_before = files(profile.raw_directory)
     pointer = (profile.state_path / "current.json").read_bytes()
     mutate(profile)
     crash_ingest(profile, boundary)
@@ -100,6 +103,7 @@ def test_process_death_rolls_back_deleted_updated_and_created_partitions(profile
     assert files(profile.state_path) == state_before
     assert recover(profile)["runs"][0]["action"] == "rolled_back"
     assert files(profile.processed_path) == before
+    assert files(profile.raw_directory) == raw_before
     assert (profile.state_path / "current.json").read_bytes() == pointer
     assert verify(profile)["activity_rows"] == 3
     assert ingest(profile)["action"] == "updated"

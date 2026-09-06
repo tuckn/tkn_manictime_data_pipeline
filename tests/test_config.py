@@ -56,7 +56,7 @@ def test_layers_merge_and_show_winning_sources(isolated):
     "data",
     [
         {"schema_version": "3.0.0"},
-        {"schema_version": "2.1.0"},
+        {"schema_version": "2.2.0"},
         {"schema_version": 1},
         {"unknown": True},
         {"backup_timeout_seconds": True},

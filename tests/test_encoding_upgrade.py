@@ -21,14 +21,17 @@ def legacy_dataset(profile, tmp_path):
     old_raw = profile.raw_directory / "Raw" / result["run_id"]
     assert raw.resolve().is_relative_to(tmp_path.resolve())
     assert old_raw.resolve().is_relative_to(tmp_path.resolve())
-    old_raw.parent.mkdir()
-    raw.rename(old_raw)
+    old_raw.mkdir(parents=True)
+    for db in raw.glob("*.db"):
+        db.rename(old_raw / db.name)
     capture = current.pop("raw_capture")
     capture["schema_version"] = "1.0.0"
     capture["tool_version"] = "0.1.0"
     atomic_json(old_raw / "capture.json", capture)
     current["tool_version"] = "0.1.0"
     current["schema_version"] = "1.0.0"
+    current.pop("raw_layout")
+    current["capture"] = result["run_id"]
     current["raw_root"] = str(old_raw.parent.resolve())
     current["capture_sha256"] = sha256_file(old_raw / "capture.json")
     current["csv_contract"]["encoding"] = "UTF-8 with BOM"
@@ -73,7 +76,7 @@ def test_upgrade_verifies_legacy_and_publishes_bom_free_versions(profile, legacy
     current = load_current(profile)
     assert current["dataset_id"] == old["dataset_id"]
     assert current["previous_run_id"] == old["run_id"]
-    assert current["raw_root"] == str((profile.raw_directory / "Raw").resolve())
+    assert current["raw_root"] == str(profile.raw_directory.resolve())
     assert current["csv_contract"]["encoding"] == "UTF-8 without BOM"
     assert result["partitions"]["created"] == len(old["artifacts"])
     for key, artifact in current["artifacts"].items():

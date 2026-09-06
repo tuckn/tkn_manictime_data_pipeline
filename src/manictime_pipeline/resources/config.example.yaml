@@ -1,13 +1,16 @@
-schema_version: "2.0.0"
+schema_version: "2.1.0"
 default_profile: current-pc
 
-# Parent folder for saved copies of the ManicTime databases.
+# Parent folder for the latest ManicTime database copies (one generation per device).
 raw_path: ~/.tkn/manictime_data_pipeline/data/raw
 # Parent folder for extracted CSV data.
 processed_data_path: ~/.tkn/manictime_data_pipeline/data/csv
 # Durable checkpoints, provenance, run records and recovery files; not disposable cache.
 # state_path defaults to ~/.tkn/manictime_data_pipeline/state
 backup_timeout_seconds: 300
+# Stop if total activity rows or any existing timeline loses more than this percent.
+# Use 100 only when deliberately accepting a reduction, after reviewing a dry-run.
+max_activity_drop_percent: 10
 
 profiles:
   current-pc:

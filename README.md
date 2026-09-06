@@ -2,11 +2,11 @@
 
 [日本語](README_ja.md)
 
-Save ManicTime's SQLite databases as immutable Raw captures and export reusable CSV.
+Save the latest copies of ManicTime's SQLite databases as Raw and export reusable CSV.
 The first run exports all available activity history and related tables; later runs
-replace only changed month/table CSVs at fixed paths. Raw captures remain available;
+replace only changed month/table CSVs at fixed paths. Raw keeps one current generation;
 CSV folders contain the latest data, and state holds provenance and checkpoints.
-Version 0.3 covers acquisition, extraction, execution records and verification;
+Version 0.4 covers acquisition, extraction, execution records and verification;
 HTML reports, classification rules, AI advice and cross-source integration are future work.
 
 ## Use it — from installation to the first result
@@ -72,7 +72,8 @@ The command returns absolute output paths as JSON on stdout and progress on stde
 
 | Location | Purpose |
 | --- | --- |
-| `<raw_path>/<device_id>/<run-id>/*.db` | Immutable snapshots of both databases |
+| `<raw_path>/<device_id>/ManicTimeCore.db` | Latest successful Core snapshot |
+| `<raw_path>/<device_id>/ManicTimeReports.db` | Latest successful Reports snapshot |
 | `<processed_data_path>/<device_id>/Ar_Activity/YYYY/MM.csv` | Current activity data for each month |
 | `<processed_data_path>/<device_id>/<table>/all.csv` | Current related/metadata table |
 | `<state_path>/<profile>/current.json` | Checkpoint pointing to the latest successful run record |
@@ -82,7 +83,8 @@ The command returns absolute output paths as JSON on stdout and progress on stde
 `state_path` defaults to `~/.tkn/manictime_data_pipeline/state`. It also holds the process
 locks. **State is durable application data, not disposable cache. Back it up together
 with Raw and CSV.** Removing it loses the checkpoint; ingest refuses to adopt existing CSVs.
-New Raw folders contain only DBs. Capture times, source paths, sizes and hashes are in the run record.
+The current Raw folder contains both DBs. During updates only, a temporary `.partial` folder
+holds the candidate/previous DBs. Capture times, source paths, sizes and hashes are in the state run record.
 The format version is recorded in JSON metadata; no version folder is added to the CSV path.
 
 After a successful ingest, read activity CSVs directly in Power BI, Python or another tool:
@@ -97,11 +99,14 @@ groups_csv = root / "Ar_Group" / "all.csv"
 
 No manifest lookup is needed for ordinary data use. For auditing, read the state
 `current.json` and the run record it names. Artifact paths are relative to the device's CSV folder.
-Historical run records describe the hashes at that time; their fixed CSV paths now contain
-current data. Raw snapshots, recorded settings and the corresponding exporter version support
-re-extraction; there is no historical CSV restore command in this version.
+Historical run records describe hashes at that time; the fixed Raw and CSV paths contain
+current data. Old run records alone cannot recreate a past DB or CSV version. Re-extract the
+current data from latest Raw; retain separate backups if historical restoration is required.
 
-Read CSVs **after ingest succeeds**, not while it is running. Replacement is atomic per file;
+`all.csv` contains all rows of one related/metadata table at the last successful update,
+for example `Ar_Group/all.csv` or `Ar_Timeline/all.csv`. Only `Ar_Activity` is split by month.
+
+Read Raw and CSV **after ingest succeeds**, not while it is running. Replacement is per file;
 an arbitrary reader can see different run versions across multiple files during an update.
 Legacy output is handled by the explicit migration procedure below.
 
@@ -129,13 +134,15 @@ Exit codes are 0 for success, 1 for expected processing/configuration failures,
 terminals and respects `NO_COLOR`.
 
 `ingest` returns `created`, `updated` or `unchanged` for the CSV dataset.
-Even an unchanged run saves a new Raw capture and execution manifest.
+Even an unchanged CSV run captures both DBs and records a new execution. It updates the
+latest Raw if its bytes differ; it does not accumulate an archive for every invocation.
 `removed` counts partitions removed from both the current index and the fixed CSV paths.
-Only previously tracked CSVs are removed; source DBs and Raw snapshots are preserved.
+Only tracked derived data is replaced/removed. Source DBs are preserved; superseded current
+Raw is deleted after a successful commit. Pre-existing legacy archives are not pruned.
 
 ## Configuration details
 
-Each YAML file must declare `schema_version: "2.0.0"`. Version 2.0.x is accepted;
+Each YAML file declares `schema_version: "2.1.0"`. Versions 2.0.x and 2.1.x are accepted;
 unsupported major/minor versions, duplicate/unknown keys and incorrect types are errors.
 Each layer is validated before merging, so a higher layer cannot hide an invalid lower layer.
 
@@ -151,6 +158,7 @@ the source that supplied each value. No configuration file is written while read
 | `processed_data_path` | Parent folder for extracted CSV data; default `~/.tkn/manictime_data_pipeline/data/csv` |
 | `state_path` | Durable checkpoint, provenance, run records and recovery data; default `~/.tkn/manictime_data_pipeline/state` |
 | `backup_timeout_seconds` | Per-DB backup timeout; default 300, integer 1–86400 |
+| `max_activity_drop_percent` | Maximum allowed activity row reduction; default 10, number 0–100; see below |
 | `profiles.<name>.device_id` | Required name used for the data subfolder; unique across profiles and valid on Windows |
 | `profiles.<name>.source_path` | Required ManicTime application folder or DB folder |
 | `profiles.<name>.raw_path` | Optional override of the common DB-copy parent folder |
@@ -176,7 +184,7 @@ profiles:
     processed_data_path: C:/path/to/csv
 ```
 
-The paths above produce `C:/path/to/archive/Example Historical PC/<run-id>/` and
+The paths above produce `C:/path/to/archive/Example Historical PC/*.db` and
 `C:/path/to/csv/Example Historical PC/`. There is no additional `Raw` folder.
 Changing `device_id` changes the output folder; do not rename it to relabel existing data.
 
@@ -224,14 +232,52 @@ evidence, not a complete backup of ManicTime executables, settings, plugins or s
 Each state run record includes capture start/end UTC times, source paths, file sizes, SHA-256, tool
 version, SQLite journal mode and capture method. DB integrity is checked with
 `PRAGMA quick_check`. Source databases are opened read-only and are never pruned,
-vacuumed, overwritten or deleted. Snapshot files are never overwritten.
+vacuumed, overwritten or deleted. Current Raw copies are replaced only after validation.
 All tables, including internal and aggregate tables, remain in Raw.
 
-Raw storage grows by approximately the combined DB sizes per run. Current CSVs are replaced;
-changed CSVs also require temporary space in state and on the destination filesystem.
-For example, two DBs totalling 754 MB add about 23 GB of Raw over 30 daily runs.
-No Raw retention/cleanup command is included in v0.3. New runs do not retain historical
-CSV versions after successful publication; historical run records remain in state.
+Raw keeps **one generation normally and old + new during an ordinary update**.
+For example, two databases totalling 754 MB need about 754 MB in steady state, and roughly
+1.5 GB during replacement when their sizes are similar, plus temporary CSV space.
+Storage follows DB growth rather than the number of runs. The previous DBs are moved
+aside on the same filesystem, not copied into a third generation in state.
+
+Candidates from failed or rejected updates are discarded after successful rollback;
+the failure details and capture metadata remain in state. If recovery/cleanup cannot
+finish, staging is retained and the next update must recover before capturing again.
+Existing archives from older releases remain until a separate deliberate cleanup.
+
+### Activity reduction safeguard
+
+Before replacing Raw or CSV, ingest compares `Ar_Activity` row counts with the previous
+successful snapshot, both overall and for each existing `ReportId` timeline. By default,
+a reduction **greater than 10%** in any comparison stops publication. A disappeared
+nonempty timeline counts as a 100% reduction, even if other timelines have grown.
+Normal updates and `ingest --dry-run` use the same check. A rejected dry-run returns
+an error without writing; a rejected normal run preserves previous data, discards the
+candidate after recovery and records the counts/reason in state.
+
+`max_activity_drop_percent` is a common setting (not a per-profile setting). `0` disallows
+any decrease; `100` allows any decrease, including an empty history. Exactly the configured
+limit is allowed. It is a row-count safeguard, not proof that the new DB contains every
+previous record: small losses, same-count substitutions or gradual losses can pass.
+It does not classify edits/deletions as errors by themselves.
+
+If a reduction is intentional, inspect the source and retain an independent backup as
+needed. Use a temporary explicit configuration override for the selected invocation:
+
+```yaml
+schema_version: "2.1.0"
+max_activity_drop_percent: 100
+```
+
+```console
+tkn-manictime-pipeline --config "C:\path\to\approved-reduction.yaml" ingest --dry-run
+tkn-manictime-pipeline --config "C:\path\to\approved-reduction.yaml" ingest
+```
+
+Keep your existing profile/output settings loaded from the normal configuration. The next
+invocation without that override uses the normal limit again. There is no implicit retry
+with a relaxed threshold and no force-overwrite switch for edited/unmanaged files.
 
 ### What is extracted
 
@@ -296,15 +342,21 @@ the continually changing live DB or audit every unreferenced historical run.
 
 ### Failure and retry
 
-Raw is first written to a new `.partial` directory, checked and renamed. All changed CSVs
-are then generated and checked in `state/<profile>/transactions/<run-id>/new/`.
-Before publication, the pipeline copies affected old CSVs into that transaction's `old/`
-folder, verifies them and saves a recovery journal. It then replaces each changed CSV
-through a temporary file beside its destination, including when state is on another drive.
-Finally it verifies the published CSVs, saves the run record and atomically replaces
-**state** `current.json`. Staging and rollback copies are removed after that commit.
+Candidate DBs are captured and checked in `<raw_path>/<device_id>/.<run-id>.partial/new/`.
+Completed snapshots are read without creating SQLite WAL/shared-memory files; live source
+reads retain normal SQLite locking and include committed WAL data. Unexpected SQLite
+sidecar files beside saved Raw stop validation instead of being ignored or deleted.
+All changed CSVs are generated/checked in `state/<profile>/transactions/<run-id>/new/`.
+CSV rollback copies go to the transaction's `old/` folder. All provenance and the recovery
+journal stay in state; no JSON metadata is written under Raw or CSV.
 
-An ordinary failure attempts rollback to the previous CSV contents. If rollback is blocked
+After preparation, the old current DBs are moved to the Raw staging `old/` directory and
+candidate DBs move into their fixed paths. CSV replacements use same-directory temporary
+files, including when CSV and state reside on different drives. Both Raw and CSV are
+verified before writing the run record and committing state `current.json`. Old DBs,
+CSV rollback copies and staging are removed only after the commit.
+
+An ordinary failure attempts rollback to the previous Raw and CSV contents. If rollback is blocked
 (for example, a file remains open or has been manually edited), staging and the journal
 remain in state. A terminated process also leaves its journal. Run:
 
@@ -324,12 +376,12 @@ State writes are required for publication. A failure to create the initial run r
 before Raw or CSV writes. Completed run records referenced by the checkpoint are immutable;
 records from interrupted/uncommitted attempts can be marked failed during recovery.
 The authoritative commit marker is `current.json`, not a run file's status alone.
-Captured Raw remains even when extraction fails; partial Raw is retained for diagnosis.
-No source or Raw pruning is performed. Configuration/preflight errors are reported on stderr.
+Failed candidates are cleaned after rollback; the previous successful Raw stays available.
+Historical run records remain in state. Configuration/preflight errors are reported on stderr.
 
 OS locks are released on process exit; the small state lock files remain. Filesystem sync
 software, manual edits and arbitrary CSV readers do not participate in those locks.
-Fixed paths do not provide a transaction spanning multiple files. Do not use the CSVs
+Fixed paths do not provide a transaction spanning multiple files. Do not use Raw or CSV
 after a failed/interrupted update until recovery completes. Filesystem or storage failures
 that prevent rollback require restoring the affected files/state from backups.
 
@@ -344,11 +396,12 @@ normal locking/shared-memory facilities; the pipeline issues no source write sta
 
 ## Maintenance and development
 
-### Upgrade from v0.1 or v0.2
+### Upgrade from v0.1, v0.2 or v0.3
 
-The application is v0.3.0. Configuration schema remains 2.0.0; state/run record schema
-is now 2.0.0. Existing v0.2 configuration values need no changes. The CSV device folder
-is now the direct output destination, without `pipeline-v1/runs/<run-id>`.
+The application is v0.4.0, configuration schema is 2.1.0, and state/run record schema is 3.0.0.
+Existing schema 2.0.x configurations remain supported without rewriting them. The new
+activity reduction limit defaults to 10%. Raw now uses fixed DB filenames; CSV keeps the
+v0.3 fixed paths. State schema 2.0.0 remains readable for verification and explicit migration.
 
 For v0.1 configurations, first back up the loaded files listed by `config show`, change
 `schema_version` to `"2.0.0"`, and set the old per-device `raw_path` to its parent when its
@@ -365,8 +418,10 @@ tkn-manictime-pipeline verify
 tkn-manictime-pipeline ingest --dry-run
 ```
 
-Migration reads `pipeline-v1/current.json`, verifies its CSVs and Raw, and exports that
-Raw snapshot into the fixed CSV paths. It preserves dataset identity, embeds the legacy
+For v0.1/v0.2, migration reads `pipeline-v1/current.json`, verifies its CSVs and Raw,
+and exports that snapshot into fixed CSV paths. For v0.3, it reads state `current.json`,
+verifies the existing dataset and keeps unchanged fixed CSVs in place. In both cases,
+the verified archived DBs are copied into the latest fixed Raw paths. It preserves dataset identity, embeds the legacy
 manifest and capture metadata in the new state record, and takes no new live DB snapshot.
 The dry-run checks legacy CSVs and lists conflicting existing CSVs; full Raw integrity and
 re-export validation happen in the normal command. A failed migration rolls back new outputs.
@@ -387,7 +442,10 @@ no new run directories or metadata are written into the CSV folder. Consume only
 folder. Removal/archival of the old layout is a separate step after verification.
 
 A v0.1 Raw capture may remain under `<raw_path>/<device_id>/Raw/<run-id>/`.
-New ingest captures go to `<raw_path>/<device_id>/<run-id>/` with DB files only.
+A v0.2/v0.3 Raw capture may remain under `<raw_path>/<device_id>/<run-id>/`.
+New ingest updates only `<raw_path>/<device_id>/ManicTimeCore.db` and `ManicTimeReports.db`.
+Legacy DB folders are not automatically deleted; their existing space is additional to
+the one current generation. `migrate-layout` is required before ingest on an older dataset.
 Migration also converts BOM CSV to UTF-8 without BOM, preserving values and LF record endings.
 Use `migrate-layout` once, then the ordinary `ingest` command for subsequent updates.
 
@@ -411,7 +469,8 @@ uv build
 ```
 
 Tests use synthetic SQLite files and include WAL capture, source preservation, historical
-edits/deletions, idempotency, schema changes, output corruption, process death during CSV replacement and after commit, rollback,
+edits/deletions, idempotency, schema changes, output corruption, process death between Raw moves, during CSV replacement and after commit, rollback,
+Raw retention bounds, activity reduction safeguards,
 legacy-layout collisions, state failures, locks, configuration layering, Unicode/BLOB/NULL
 CSV and stderr/JSON behavior.
 Runtime modules are split into CLI/configuration, SQLite access, streaming CSV, pipeline

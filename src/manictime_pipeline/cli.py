@@ -29,7 +29,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         prog="tkn-manictime-pipeline",
         parents=[common],
-        description="Archive ManicTime DBs and export changed CSV partitions. Local-only.",
+        description="Keep the latest ManicTime DBs and export changed CSV partitions. Local-only.",
     )
     root.add_argument("--version", action="version", version=__version__)
     commands = root.add_subparsers(dest="command", required=True)
@@ -46,9 +46,10 @@ def parser() -> argparse.ArgumentParser:
     run = commands.add_parser(
         "ingest",
         parents=[common],
-        help="Save new Raw snapshots and publish changed CSV partitions (writes by default)",
-        description="Save both DBs with SQLite online backup, then publish changed "
-        "BOM-free UTF-8/LF CSV partitions. "
+        help="Replace latest Raw and publish changed CSV partitions (writes by default)",
+        description="Capture and validate both DBs, then replace latest Raw and changed "
+        "BOM-free UTF-8/LF CSV partitions. Keep one Raw generation after success; "
+        "stop if activity reduction exceeds max_activity_drop_percent. "
         "No source deletion, networking, AI, external sqlite3 or browser launch.",
     )
     run.add_argument(
@@ -61,8 +62,11 @@ def parser() -> argparse.ArgumentParser:
         "verify", parents=[common], help="Verify published CSV against its Raw capture"
     )
     for name, help_text in [
-        ("recover", "Restore an interrupted CSV update using the state journal"),
-        ("migrate-layout", "Copy legacy pipeline-v1 CSV into fixed paths; preserve old files"),
+        ("recover", "Restore an interrupted Raw/CSV update using the state journal"),
+        (
+            "migrate-layout",
+            "Migrate v0.1-v0.3 to latest Raw and fixed CSV paths; preserve legacy files",
+        ),
     ]:
         command = commands.add_parser(
             name,
@@ -112,5 +116,5 @@ def main(argv: list[str] | None = None) -> int:
         logging.error("%s", exc, exc_info=verbose)
         return 1
     except KeyboardInterrupt:
-        logging.error("Interrupted; run recover before reading CSV data")
+        logging.error("Interrupted; run recover before reading Raw or CSV data")
         return 130

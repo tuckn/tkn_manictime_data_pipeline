@@ -1,14 +1,13 @@
 {
   "_example": "Abbreviated synthetic format illustration. Hashes are placeholders; this is not a verifiable run.",
-  "schema_version": "2.0.0",
-  "tool_version": "0.3.0",
+  "schema_version": "3.0.0",
+  "tool_version": "0.4.0",
   "run_id": "20260102T000000.000000Z-12345678",
   "dataset_id": "00000000-0000-4000-8000-000000000001",
   "device_id": "Example Current PC",
   "profile": "current-pc",
   "source_path": "C:/path/to/ManicTime",
   "raw_root": "C:/path/to/archive/Example Current PC",
-  "capture": "20260102T000000.000000Z-12345678",
   "previous_run_id": "20260101T000000.000000Z-12345678",
   "artifacts": {
     "Ar_Activity/2025/12": {
@@ -36,7 +35,7 @@
   "processed_root": "C:/path/to/csv/Example Current PC",
   "raw_config_root": "C:/path/to/archive/Example Current PC",
   "raw_capture": {
-    "schema_version": "2.0.0",
+    "schema_version": "3.0.0",
     "run_id": "20260102T000000.000000Z-12345678",
     "databases": [
       {
@@ -67,6 +66,20 @@
     "raw_path": "C:/path/to/archive",
     "processed_data_path": "C:/path/to/csv",
     "state_path": "C:/path/to/state",
-    "backup_timeout_seconds": 300
+    "backup_timeout_seconds": 300,
+    "max_activity_drop_percent": 10
+  },
+  "raw_layout": "latest",
+  "activity_stats": {
+    "rows": 45,
+    "timelines": {
+      "3": 30,
+      "4": 15
+    }
+  },
+  "activity_drop_check": {
+    "max_activity_drop_percent": 10,
+    "passed": true,
+    "violations": []
   }
 }

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
 PROFILE_KEYS = {"device_id", "source_path", "raw_path", "processed_data_path"}
 REQUIRED_PROFILE_KEYS = {"device_id", "source_path"}
 OUTPUT_KEYS = ("raw_path", "processed_data_path")
@@ -21,6 +21,7 @@ TOP_KEYS = {
     "processed_data_path",
     "state_path",
     "backup_timeout_seconds",
+    "max_activity_drop_percent",
     "profiles",
 }
 
@@ -77,9 +78,9 @@ def _validate(data: object, source: Path) -> dict:
     if unknown:
         raise ValueError(f"Unknown config keys in {source}: {sorted(unknown)}")
     version = data.get("schema_version")
-    if not isinstance(version, str) or not re.fullmatch(r"2\.0\.\d+", version):
+    if not isinstance(version, str) or not re.fullmatch(r"2\.[01]\.\d+", version):
         raise ValueError(
-            f"Unsupported schema_version {version!r} in {source}; supported: 2.0.x. "
+            f"Unsupported schema_version {version!r} in {source}; supported: 2.0.x and 2.1.x. "
             "For 1.0.x, follow the README upgrade instructions: raw_path now names "
             "a parent directory shared by devices. Back up and update the config explicitly."
         )
@@ -89,6 +90,9 @@ def _validate(data: object, source: Path) -> dict:
         if key == "backup_timeout_seconds":
             if type(value) is not int or not 1 <= value <= 86400:
                 raise ValueError("backup_timeout_seconds must be an integer from 1 to 86400")
+        elif key == "max_activity_drop_percent":
+            if type(value) not in {int, float} or not 0 <= value <= 100:
+                raise ValueError("max_activity_drop_percent must be a number from 0 to 100")
         elif not isinstance(value, str) or not value.strip():
             raise ValueError(f"{key} must be a non-empty string in {source}")
     if "profiles" in data:
@@ -115,6 +119,7 @@ class Profile:
     processed_path: Path
     state_path: Path
     backup_timeout_seconds: int
+    max_activity_drop_percent: float = 10.0
 
     @property
     def raw_directory(self) -> Path:
@@ -152,6 +157,7 @@ class Profile:
 def load_config(explicit: Path | None = None, profile_name: str | None = None) -> dict:
     values = {
         "backup_timeout_seconds": 300,
+        "max_activity_drop_percent": 10.0,
         "raw_path": str(app_root() / "data" / "raw"),
         "processed_data_path": str(app_root() / "data" / "csv"),
         "state_path": str(app_root() / "state"),
@@ -217,6 +223,7 @@ def selected_profile(config: dict) -> Profile:
         path_value(p.get("processed_data_path", data["processed_data_path"])) / p["device_id"],
         path_value(data["state_path"]) / name,
         data["backup_timeout_seconds"],
+        data["max_activity_drop_percent"],
     )
     result.validate_paths()
     return result
