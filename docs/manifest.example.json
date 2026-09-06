@@ -1,0 +1,32 @@
+{
+  "_example": "Abbreviated synthetic format illustration. Hashes are placeholders; this is not a verifiable run.",
+  "schema_version": "1.0.0",
+  "tool_version": "0.1.0",
+  "run_id": "20260102T000000.000000Z-12345678",
+  "dataset_id": "00000000-0000-4000-8000-000000000001",
+  "device_id": "Example Current PC",
+  "profile": "current-pc",
+  "source_path": "C:/path/to/ManicTime",
+  "raw_root": "C:/path/to/archive/Example Current PC/Raw",
+  "capture": "20260102T000000.000000Z-12345678",
+  "capture_sha256": "<sha256>",
+  "previous_run_id": "20260101T000000.000000Z-12345678",
+  "artifacts": {
+    "Ar_Activity/2025/12": {
+      "table": "Ar_Activity",
+      "rows": 42,
+      "sha256": "<csv-sha256>",
+      "schema_sha256": "<schema-sha256>",
+      "path": "runs/20260101T000000.000000Z-12345678/Ar_Activity/2025/12.csv",
+      "origin_run_id": "20260101T000000.000000Z-12345678"
+    },
+    "Ar_Activity/2026/01": {
+      "table": "Ar_Activity",
+      "rows": 3,
+      "sha256": "<csv-sha256>",
+      "schema_sha256": "<schema-sha256>",
+      "path": "runs/20260102T000000.000000Z-12345678/Ar_Activity/2026/01.csv",
+      "origin_run_id": "20260102T000000.000000Z-12345678"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+schema_version: "1.0.0"
+default_profile: current-pc
+processed_data_path: C:/path/to/data/sourceAligned/activities/deviceUsage/ManicTime
+# state_path defaults to ~/.tkn/manictime_data_pipeline/state
+backup_timeout_seconds: 300
+
+profiles:
+  current-pc:
+    device_id: Example Current PC
+    # Either the application root (containing Data) or the DB directory.
+    source_path: C:/path/to/ManicTime
+    # A new Raw/<run-id> folder is added on each successful capture.
+    raw_path: C:/path/to/sources/softwares/ManicTime/Example Current PC
