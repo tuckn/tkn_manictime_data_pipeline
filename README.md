@@ -19,7 +19,7 @@ output without writing pipeline data, configuration, state, cache or temporary f
 | ---------- | ------------------------------------------------------------------------------------ |
 | `ingest` | Capture both DBs, compare partitions, export changes and publish the latest manifest |
 | `verify` | Check CSV, Raw checksums and the correspondence between the two                      |
-| `build-report` | Create HTML reports and supporting CSV for all ingested PCs |
+| `build-report` | Update default_profile and create a combined HTML report |
 
 ### Requirements and installation
 
@@ -113,11 +113,19 @@ an arbitrary reader can see different run versions across multiple files during 
 
 ## HTML activity reports
 
-Use `tkn-manictime-pipeline build-report` to generate reports for all configured PCs and open
-`<report_path>/index.html`. For weekly scheduled runs, use `build-report --no-open` after ingest.
-The default output is `~/.tkn/manictime_data_pipeline/reports`; set the top-level `report_path`
-in YAML to change it. `--dry-run` validates and aggregates without writes or browser launch.
-See [report setup, metrics, mappings and outputs](docs/reports.md).
+Run `tkn-manictime-pipeline rules init` once to create editable rules in
+`~/.tkn/manictime_data_pipeline/rules`. `build-report` updates **default_profile** and opens
+`<report_path>/index.html`; `--all` updates all configured PCs. Previously built PCs remain
+available in the same page's PC filter. Use `--all` once to include the retired PC, and after
+rule changes. For weekly execution use `build-report --no-open` after ingest, or `--all --no-open`
+when multiple active PCs have been ingested. Titles and search terms have a separate search page.
+
+The default output is `~/.tkn/manictime_data_pipeline/reports`; override `report_path` in YAML.
+`--dry-run` validates and aggregates without writes or browser launch. `<fingerprint>` is the
+SHA-256 value calculated from input CSV, classification/extraction rules, aggregation conditions,
+generation code and HTML templates. Latest and previous PC generations are retained; unchanged
+retired PCs do not reaggregate merely because the date changes.
+See [report setup, rule column reference, history search and output formats](docs/reports.md).
 
 ## Command reference
 
@@ -128,7 +136,8 @@ See [report setup, metrics, mappings and outputs](docs/reports.md).
 | Inspect source schema, row counts and activity range    | `inspect`                 |
 | Capture and incrementally publish CSV                   | `ingest [--dry-run]`      |
 | Verify the current dataset and its Raw capture          | `verify`                  |
-| Build year/month/week HTML for all PCs | `build-report [--dry-run] [--no-open]` |
+| Update the default PC (or all PCs) and combined HTML | `build-report [--all] [--dry-run] [--no-open]` |
+| Create missing editable report rules | `rules init [--dry-run]` |
 | Recover an interrupted CSV update | `recover [--dry-run]` |
 
 Common options: `--config PATH`, `--profile NAME`, `-q/--quiet` and `-v/--verbose`.
@@ -151,7 +160,7 @@ Raw is deleted after a successful commit.
 
 ## Configuration details
 
-Each YAML file declares `schema_version: "2.2.0"`. Versions 2.0.x through 2.2.x are accepted;
+Each YAML file declares `schema_version: "2.3.0"`. Versions 2.0.x through 2.3.x are accepted;
 unsupported major/minor versions, duplicate/unknown keys and incorrect types are errors.
 Each layer is validated before merging, so a higher layer cannot hide an invalid lower layer.
 Published state and run records use schema 3.0.0 and the latest Raw layout.
@@ -444,7 +453,9 @@ unmanaged-file collisions, state failures, locks, configuration layering, Unicod
 CSV and stderr/JSON behavior.
 Runtime modules are split into CLI/configuration, SQLite access, streaming CSV, pipeline
 publication and file/logging helpers. No live/private datasets are included in tests.
-See [the output format example](docs/manifest.example.json) for a small synthetic index.
+See the synthetic [ingest run manifest](docs/manifest.example.json) and
+[checkpoint pointer](docs/current.example.json) examples. They document persisted formats and
+are not runtime resources; [details](docs/reports.md#why-json-examples-are-in-docs).
 
 The design follows the existing Itadaki pipeline's src layout, uv packaging, YAML profiles,
 application-owned state and default-write/dry-run command contract. ManicTime's continuously

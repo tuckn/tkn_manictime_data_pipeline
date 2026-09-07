@@ -130,6 +130,19 @@ def report_config(profile, monkeypatch, tmp_path):
             profile.name: {"device_id": profile.device_id, "source_path": str(profile.source_path)}
         },
     }
+    from manictime_pipeline.report_rules import initialize_rules
+
+    values.update(
+        {
+            key: str(tmp_path / "rules" / name)
+            for key, name in (
+                ("application_rules_path", "application_rules.csv"),
+                ("site_rules_path", "site_rules.csv"),
+                ("extraction_rules_path", "extraction_rules.yaml"),
+            )
+        }
+    )
+    initialize_rules(values)
     return {"values": values, "winning_sources": {}, "sources": []}
 
 
@@ -254,9 +267,18 @@ def test_rules_and_channel_evidence(tmp_path):
     assert classify(group, "", "PC", "2026-01-02", rules)[2:] == ("Dev", "Research")
     assert classify(group, "", "Other PC", "2026-01-02", rules)[2] == "Unknown"
     assert classify(group, "", "PC", "2025-12-31", rules)[2] == "Unknown"
-    assert lookup_term("https://ejje.weblio.jp/", "Weblio") is None
+    from importlib.resources import files
+
+    from manictime_pipeline.report_rules import parse_extraction_rules
+
+    extraction = parse_extraction_rules(
+        files("manictime_pipeline").joinpath("resources/extraction_rules.yaml").read_text("utf-8")
+    )
+    assert lookup_term("https://ejje.weblio.jp/", "Weblio", extraction) is None
     assert (
-        lookup_term("https://dictionary.cambridge.org/dictionary/english/look-up", "")[1]
+        lookup_term("https://dictionary.cambridge.org/dictionary/english/look-up", "", extraction)[
+            1
+        ]
         == "look-up"
     )
 
@@ -322,7 +344,7 @@ def test_all_pcs_and_single_pc_update_preserve_other_links(report_config, profil
         "device_id": second.device_id,
         "source_path": str(second.source_path),
     }
-    result = reports.build_report(report_config)
+    result = reports.build_report(report_config, all_profiles=True)
     assert len(result["devices"]) == 2
     report_config["values"]["report_lookup_gap_minutes"] = 15
     result = reports.build_report(report_config, profile_name=profile.name)
@@ -371,3 +393,174 @@ def test_cli_report_browser_and_stdout(report_config, monkeypatch, capsys, optio
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Report:" in captured.err
+
+
+def test_retired_pc_next_day_reuses_and_missing_output_is_deterministic(report_config, monkeypatch):
+    reports.build_report(report_config)
+    folder, data = snapshot_data(report_config)
+    original = reports.build_data
+    monkeypatch.setattr(
+        reports, "report_cutoff", lambda tz: datetime(2026, 2, 1, tzinfo=tz).timestamp()
+    )
+    monkeypatch.setattr(reports, "build_data", lambda *a: pytest.fail("Retired PC reaggregated"))
+    result = reports.build_report(report_config)
+    assert result["devices"][0]["action"] == "unchanged"
+    assert result["devices"][0]["aggregation_reused"]
+    assert data["cutoff"].startswith("2026-01-03")
+    monkeypatch.setattr(reports, "build_data", original)
+    (folder / "domains.csv").unlink()
+    reports.build_report(report_config)
+    assert (folder / "domains.csv").is_file()
+
+
+def test_today_becomes_eligible_on_next_day(report_config, monkeypatch):
+    monkeypatch.setattr(
+        reports, "report_cutoff", lambda tz: datetime(2026, 1, 2, tzinfo=tz).timestamp()
+    )
+    reports.build_report(report_config)
+    assert snapshot_data(report_config)[1]["last_day"] == "2026-01-01"
+    monkeypatch.setattr(
+        reports, "report_cutoff", lambda tz: datetime(2026, 1, 3, tzinfo=tz).timestamp()
+    )
+    result = reports.build_report(report_config)
+    assert not result["devices"][0]["aggregation_reused"]
+    assert snapshot_data(report_config)[1]["last_day"] == "2026-01-02"
+
+
+def test_default_profile_and_all_conflict(report_config):
+    report_config["values"]["profiles"]["not-ingested"] = {
+        "device_id": "Future PC",
+        "source_path": "C:/path/to/future-pc",
+    }
+    assert len(reports.build_report(report_config)["devices"]) == 1
+    with pytest.raises(ValueError, match="cannot be combined"):
+        reports.build_report(report_config, profile_name="example", all_profiles=True)
+    with pytest.raises(ValueError, match="No successful ingest"):
+        reports.build_report(report_config, all_profiles=True)
+
+
+def test_rule_initialization_and_always_read(report_config):
+    from manictime_pipeline.report_rules import initialize_rules
+
+    reports.build_report(report_config)
+    path = Path(report_config["values"]["extraction_rules_path"])
+    original = path.read_bytes()
+    path.write_bytes(original + b"\n# My settings\n")
+    initialize_rules(report_config["values"])
+    assert path.read_bytes() == original + b"\n# My settings\n"
+    path.write_text('schema_version: "1.0.0"\nrules: []\n')
+    reports.build_report(report_config)
+    assert snapshot_data(report_config)[1]["lookups"] == []
+    path.unlink()
+    with pytest.raises(ValueError, match="rules init"):
+        reports.build_report(report_config)
+    initialize_rules(report_config["values"], dry_run=True)
+    assert not path.exists()
+
+
+def test_extraction_validation_and_search_rules(report_config):
+    from manictime_pipeline.report_rules import extract, extraction_rules, parse_extraction_rules
+
+    rules = extraction_rules(Path(report_config["values"]["extraction_rules_path"]))
+    for host in ("www.google.com", "google.co.jp", "www.bing.com"):
+        result = extract(f"https://{host}/search?q=Some+Words%26more", "", rules, "search")
+        assert result["term"] == "Some Words&more"
+    assert extract("https://google.com.evil.example/search?q=secret", "", rules, "search") is None
+    assert extract("https://www.google.com/url?q=link", "", rules, "search") is None
+    assert extract("https://bing.com/search", "", rules, "search") is None
+    assert (
+        extract("https://ejje.weblio.jp/", "Wordの意味 - Weblio", rules, "dictionary")["term"]
+        == "word"
+    )
+    with pytest.raises(ValueError, match="capture group"):
+        parse_extraction_rules(
+            'schema_version: "1.0.0"\nrules:\n'
+            "  - {id: x, kind: dictionary, hosts: [a.com], path_pattern: x}\n"
+        )
+
+
+def test_title_chunks_icons_and_search_evidence(report_config, profile):
+    import base64
+
+    db = sqlite3.connect(profile.source_path / "ManicTimeReports.db")
+    db.execute("ALTER TABLE Ar_Group ADD COLUMN Icon32 BLOB")
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB1sAAAAASUVORK5CYII="
+    )
+    db.execute("UPDATE Ar_Group SET Icon32=? WHERE ReportId=3", (png,))
+    db.execute(
+        "UPDATE Ar_Activity SET Name='https://www.google.com/search?q=Example+Query' "
+        "WHERE ReportId=4 AND ActivityId=4"
+    )
+    db.commit()
+    db.close()
+    ingest(profile)
+    reports.build_report(report_config)
+    folder, data = snapshot_data(report_config)
+    assert len(data["icons"]) == 1
+    assert data["periods"]["all"]["apps"][0]["icon"] in data["icons"]
+    assert sum(c["titles"] for c in data["history"]) == 3
+    assert sum(c["searches"] for c in data["history"]) == 1
+    records = []
+    for chunk in data["history"]:
+        text = (folder / chunk["path"]).read_text("utf-8")
+        assert "</script>" not in text
+        payload = json.loads(text.removeprefix("window.__historyChunk=").removesuffix(";"))
+        records.extend((r, payload["strings"]) for r in payload["rows"])
+    search, strings = next((r, s) for r, s in records if r[6] == "search")
+    assert strings[search[2]] == "Example Query"
+    assert search[4] == "4" and search[8] == "4"
+    assert any("</script><img" in strings[r[2]] for r, strings in records)
+
+
+def test_template_only_change_reuses_aggregation_and_history(report_config, monkeypatch):
+    reports.build_report(report_config)
+    folder, original = snapshot_data(report_config)
+    history = {c["path"]: (folder / c["path"]).read_bytes() for c in original["history"]}
+    real_files = reports.files
+
+    class ChangedTemplate:
+        def __init__(self, resource):
+            self.resource = resource
+
+        def joinpath(self, *parts):
+            return ChangedTemplate(self.resource.joinpath(*parts))
+
+        def read_bytes(self):
+            value = self.resource.read_bytes()
+            return (
+                value + b"\n<!-- Updated presentation -->"
+                if self.resource.name == "report.html"
+                else value
+            )
+
+        def read_text(self, encoding):
+            return self.read_bytes().decode(encoding)
+
+    monkeypatch.setattr(reports, "files", lambda name: ChangedTemplate(real_files(name)))
+    monkeypatch.setattr(reports, "build_data", lambda *a: pytest.fail("Presentation reaggregated"))
+    result = reports.build_report(report_config)
+    assert result["devices"][0]["action"] == "rendered"
+    new_folder, _ = snapshot_data(report_config)
+    assert new_folder != folder
+    assert all((new_folder / name).read_bytes() == payload for name, payload in history.items())
+
+
+def test_report_atomic_writes_under_long_parent(tmp_path):
+    folder = tmp_path / ("x" * max(1, 220 - len(str(tmp_path))))
+    target = folder / "unresolved_dictionary.csv"
+    reports.atomic_bytes(target, b"complete")
+    assert target.read_bytes() == b"complete"
+    reports.atomic_json(folder / "manifest.json", {"complete": True})
+    assert reports.read_json(folder / "manifest.json") == {"complete": True}
+
+
+def test_extra_directory_preserves_old_generation(report_config):
+    reports.build_report(report_config)
+    folder, _ = snapshot_data(report_config)
+    (folder / "my-notes").mkdir()
+    for gap in (10, 20):
+        report_config["values"]["report_lookup_gap_minutes"] = gap
+        reports.build_report(report_config)
+    assert (folder / "my-notes").is_dir()
+    assert (folder / "manifest.json").is_file()

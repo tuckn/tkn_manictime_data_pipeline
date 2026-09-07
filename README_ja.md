@@ -18,7 +18,7 @@ Raw は最新1世代を保持し、CSV も固定パスに最新データを保�
 | ---------- | ----------------------------------------------------------- |
 | `ingest` | 両 DB の Raw 保存、変更判定、CSV 抽出、最新 manifest の公開 |
 | `verify` | CSV・Raw のハッシュと、Raw に対する CSV の一致の検証        |
-| `build-report` | 取得済みの全PCを集計したHTMLレポートと補助CSV |
+| `build-report` | default_profileを更新し、PCを横断するHTMLレポートを生成 |
 
 ### 必要環境とインストール
 
@@ -110,11 +110,19 @@ Raw・CSV は **ingest の成功後**に読み込んでください。置換は�
 
 ## HTML活動レポート
 
-`tkn-manictime-pipeline build-report`で、設定にある全PCのレポートを生成し、
-`<report_path>/index.html`を開きます。毎週の定期実行は、取得成功後に`build-report --no-open`を使います。
-既定の出力先は`~/.tkn/manictime_data_pipeline/reports`で、YAMLの共通設定`report_path`で変更できます。
-`--dry-run`は書き込み・ブラウザ起動なしで検証と集計を行います。
-[設定・指標・補足CSV・保存仕様](docs/reports_ja.md)に詳細があります。
+初回に `tkn-manictime-pipeline rules init` で `~/.tkn/manictime_data_pipeline/rules` に
+編集用ルールを作成します。`build-report` は **default_profile** を更新して
+`<report_path>/index.html` を開きます。`--all` で全profileを更新します。
+以前に生成した旧PCも、同じ画面のPCフィルターで切り替え・統合できます。
+初回の旧PC追加時とルール変更後には `--all` を使ってください。
+毎週は取得成功後に `build-report --no-open`、複数現役PCなら `--all --no-open` を使います。
+ウィンドウタイトルと検索語の履歴は別ページで検索できます。
+
+既定の出力先は `~/.tkn/manictime_data_pipeline/reports` で、共通設定 `report_path` で変更できます。
+`--dry-run` は書き込み・ブラウザ起動なしで検証と集計を行います。
+`<fingerprint>` は「入力CSV、分類・抽出ルール、集計条件、生成コード、HTMLテンプレートから計算した
+SHA-256の値です」。最新と直前のPC別世代を保持し、旧PCは日付だけが変わっても再集計しません。
+[設定・ルール各列の使い方・履歴検索・保存仕様](docs/reports_ja.md)に詳細があります。
 
 ## コマンド一覧
 
@@ -126,7 +134,8 @@ Raw・CSV は **ingest の成功後**に読み込んでください。置換は�
 | Raw 保存と CSV 差分更新                    | `ingest [--dry-run]`      |
 | 最新 CSV と対応する Raw を検証             | `verify`                  |
 | 中断した CSV 更新を復旧 | `recover [--dry-run]` |
-| 全PCの年・月・週HTMLレポートを生成 | `build-report [--dry-run] [--no-open]` |
+| 既定PC（または全PC）を更新し、統合HTMLを生成 | `build-report [--all] [--dry-run] [--no-open]` |
+| 不足している編集用ルールを作成 | `rules init [--dry-run]` |
 
 共通オプションは `--config PATH`、`--profile NAME`、
 `-q/--quiet`、`-v/--verbose` です。
@@ -146,7 +155,7 @@ removed は最新一覧と固定パスの両方から削除するパーティシ
 
 ## 設定の詳細
 
-各 YAML は `schema_version: "2.2.0"` を持ちます。2.0.x〜2.2.xに対応し、
+各 YAML は `schema_version: "2.3.0"` を持ちます。2.0.x〜2.3.xに対応し、
 未対応の major/minor、キーの重複・未知キー、型の不一致はエラーにします。
 各設定元をマージ前に検証するため、上位設定で下位設定の誤りを隠すことはできません。
 state・実行記録はスキーマ 3.0.0 と最新 Raw 配置を使用します。
@@ -432,7 +441,8 @@ state の書き込み失敗、ロック、設定階層の厳密な検証、
 日本語・BLOB・NULL の CSV、標準エラーと JSON の分離を確認します。
 CLI・設定、SQLite アクセス、CSV の逐次処理、パイプラインの公開、ファイル・ログ処理に責務を分離しています。
 実データや個人情報をテストには含めません。
-[小さな出力形式の例](docs/manifest.example.json)も参照できます。
+[ingest実行記録の例](docs/manifest.example.json)と[確定ポインターの例](docs/current.example.json)は、
+保存形式を理解するための見本です。コードは読み込みません。[配置の説明](docs/reports_ja.md#docsのjson例について)。
 
 既存 Itadaki パイプラインの src layout、uv 配布、YAML プロファイル、
 アプリ所有の state、通常実行で書き込む／dry-run で確認する契約を参考にしています。

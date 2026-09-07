@@ -1,0 +1,32 @@
+schema_version: "1.0.0"
+# First successful match wins within each kind. Hosts omit a leading www.
+rules:
+  - id: weblio
+    kind: dictionary
+    hosts: [ejje.weblio.jp]
+    path_pattern: '^/content/([^/]+)'
+    title_pattern: '^(.+?)の意味(?:・使い方)?'
+    query_parameter: q
+  - id: cambridge
+    kind: dictionary
+    hosts: [dictionary.cambridge.org]
+    path_pattern: '^/(?:[a-z-]+/)?dictionary/[^/]+/([^/]+)'
+    title_pattern: '^(.+?)\s*\|\s*(?:meaning|definition)'
+    query_parameter: q
+  - id: oxford
+    kind: dictionary
+    hosts: [oxfordlearnersdictionaries.com]
+    path_pattern: '^/definition/english/([^/]+)'
+    title_pattern: '^(.+?)\s+(?:noun|verb|adjective|adverb)\s+-'
+    strip_suffix: '_\d+$'
+    query_parameter: q
+  - id: google
+    kind: search
+    hosts: [google.com, google.co.jp]
+    path_pattern: '^/search/?$'
+    query_parameter: q
+  - id: bing
+    kind: search
+    hosts: [bing.com]
+    path_pattern: '^/search/?$'
+    query_parameter: q

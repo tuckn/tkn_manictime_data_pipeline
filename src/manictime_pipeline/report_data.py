@@ -2,28 +2,30 @@
 
 from __future__ import annotations
 
+import base64
 import bisect
 import csv
 import fnmatch
+import hashlib
 import json
 import logging
 import re
-import unicodedata
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, time, timedelta
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from .export import decode_cell
+from .report_history import pack_history
+from .report_rules import extract
 
 LOG = logging.getLogger(__name__)
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "2.0.0"
 APP_FIELDS = ("category", "family", "channel", "purpose")
 CATEGORIES = {"Browser", "Desktop app", "System / Shell", "Unknown"}
 RULE_FIELDS = {"device_id", "valid_from", "valid_to", "match_field", "pattern", *APP_FIELDS}
-SITES = {"ejje.weblio.jp", "dictionary.cambridge.org", "oxfordlearnersdictionaries.com"}
 BROWSERS = {
     "chrome.exe": "Chrome",
     "msedge.exe": "Edge",
@@ -216,38 +218,9 @@ def period_ids(day: str):
     return "all", day[:4], day[:7], f"{iso.year}-W{iso.week:02}"
 
 
-def lookup_term(url: str, title: str) -> tuple | None:
-    parsed = urlsplit(url)
-    host = (parsed.hostname or "").lower().removeprefix("www.")
-    if host not in SITES:
-        return None
-    path = unquote(parsed.path)
-    patterns = {
-        "ejje.weblio.jp": r"^/content/([^/]+)",
-        "dictionary.cambridge.org": r"^/(?:[a-z-]+/)?dictionary/[^/]+/([^/]+)",
-        "oxfordlearnersdictionaries.com": r"^/definition/english/([^/]+)",
-    }
-    match = re.search(patterns[host], path)
-    method = "url"
-    if match:
-        term = match[1]
-        if host == "oxfordlearnersdictionaries.com":
-            term = re.sub(r"_\d+$", "", term)
-    else:
-        expressions = {
-            "ejje.weblio.jp": r"^(.+?)の意味(?:・使い方)?",
-            "dictionary.cambridge.org": r"^(.+?)\s*\|\s*(?:meaning|definition)",
-            "oxfordlearnersdictionaries.com": r"^(.+?)\s+(?:noun|verb|adjective|adverb)\s+-",
-        }
-        match = re.search(expressions[host], title, re.I)
-        if not match:
-            return None
-        term, method = match[1], "title"
-    term = unicodedata.normalize("NFKC", term).strip().strip('「」"').casefold()
-    if not term or len(term) > 120:
-        return None
-    query = parse_qs(parsed.query).get("q", [term])[0]
-    return host, term, query, method
+def lookup_term(url: str, title: str, rules: list[dict]) -> tuple | None:
+    result = extract(url, title, rules, "dictionary")
+    return tuple(result[k] for k in ("host", "term", "search_term", "method")) if result else None
 
 
 def metric():
@@ -270,6 +243,7 @@ def build_data(
     app_rules: list[dict],
     site_rules: list[dict],
     gap_minutes: int,
+    extraction: list[dict],
 ) -> dict:
     root = profile.processed_path
     timelines = list(csv_rows(root / "Ar_Timeline/all.csv", {"ReportId", "SchemaName"}))
@@ -284,10 +258,19 @@ def build_data(
     groups = {
         (r["ReportId"], r["GroupId"]): r
         for r in csv_rows(
-            root / "Ar_Group/all.csv", {"ReportId", "GroupId", "Name", "Key", "Other"}
+            root / "Ar_Group/all.csv",
+            {"ReportId", "GroupId", "Name", "Key", "Other", "Icon16", "Icon32"},
         )
     }
+    icons, group_icons, app_icons = {}, {}, {}
+    for key, group in groups.items():
+        raw = group.get("Icon32") or group.get("Icon16")
+        if isinstance(raw, bytes) and raw.startswith(b"\x89PNG\r\n\x1a\n") and len(raw) <= 256_000:
+            digest = hashlib.sha256(raw).hexdigest()
+            icons[digest] = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+            group_icons[key] = digest
     active_intervals, usage_intervals = [], []
+    source_max_end = 0.0
     quality = Counter()
     fields = {
         "ReportId",
@@ -302,6 +285,14 @@ def build_data(
         if i == 1 or i % 12 == 0 or i == len(activity_paths):
             LOG.info("%s: computer usage %d/%d", profile.device_id, i, len(activity_paths))
         for row in csv_rows(path, fields):
+            try:
+                end_value = datetime.fromisoformat(row["EndUtcTime"])
+                source_max_end = max(
+                    source_max_end,
+                    (end_value if end_value.tzinfo else end_value.replace(tzinfo=UTC)).timestamp(),
+                )
+            except (ValueError, TypeError, KeyError, OverflowError):
+                pass
             if row["ReportId"] != ids["ComputerUsage"]:
                 continue
             span = interval(row, cutoff, quality)
@@ -334,6 +325,8 @@ def build_data(
     periods = defaultdict(lambda: {"apps": {}, "domains": {}})
     inventory = {}
     lookups, unresolved = [], []
+    history, history_payloads = [], {}
+    dictionary_hosts = {h for r in extraction if r["kind"] == "dictionary" for h in r["hosts"]}
     sites_by_host = {r["host"]: r for r in site_rules}
     carry = {}
     last_ends = {}
@@ -341,6 +334,7 @@ def build_data(
     for i, path in enumerate(activity_paths, 1):
         LOG.info("%s: applications and websites %d/%d", profile.device_id, i, len(activity_paths))
         rows = list(csv_rows(path, fields))
+        history_rows = []
         apps = dict(carry)
         app_rows = [r for r in rows if r["ReportId"] == ids["Applications"]]
         doc_rows = [r for r in rows if r["ReportId"] == ids["Documents"]]
@@ -365,6 +359,22 @@ def build_data(
                     classification = classify(group, title, profile.device_id, day, app_rules)
                     apps[row["ActivityId"]] = (start, end, classification, title)
                     key = classification
+                    icon_key = group_icons.get((row["ReportId"], row["GroupId"]))
+                    if icon_key:
+                        app_icons.setdefault(classification, icon_key)
+                    history_rows.append(
+                        [
+                            datetime.fromtimestamp(start, tz).isoformat(),
+                            datetime.fromtimestamp(end, tz).isoformat(),
+                            title,
+                            classification[1],
+                            row["ActivityId"],
+                            active.seconds(start, end),
+                            "title",
+                            "",
+                            row["ReportId"],
+                        ]
+                    )
                     invkey = (
                         group.get("Key") or "",
                         group.get("Name") or "Unknown",
@@ -389,9 +399,24 @@ def build_data(
                     site = sites_by_host.get(host, {})
                     key = (host, site.get("service", host), site.get("purpose", ""))
                     normalized_host = host.removeprefix("www.")
-                    if normalized_host in SITES:
+                    search = extract(title, parent[3] if parent else "", extraction, "search")
+                    if search:
+                        history_rows.append(
+                            [
+                                datetime.fromtimestamp(start, tz).isoformat(),
+                                datetime.fromtimestamp(end, tz).isoformat(),
+                                search["term"],
+                                classification[1],
+                                row["ActivityId"],
+                                active.seconds(start, end),
+                                "search",
+                                title,
+                                row["ReportId"],
+                            ]
+                        )
+                    if normalized_host in dictionary_hosts:
                         app_title = parent[3] if parent else ""
-                        word = lookup_term(title, app_title)
+                        word = lookup_term(title, app_title, extraction)
                         evidence = {
                             "source_file": path.relative_to(root).as_posix(),
                             "report_id": row["ReportId"],
@@ -442,6 +467,29 @@ def build_data(
         # CSV partitioning follows recorded StartLocalTime, not necessarily report_timezone.
         # Keep intervals near the boundary, including a one-day timezone margin.
         boundary = next_month.replace(tzinfo=tz).timestamp() - 86400
+        if history_rows:
+            relative = (
+                "history/"
+                + path.relative_to(root)
+                .as_posix()
+                .removeprefix("Ar_Activity/")
+                .replace("/", "-")
+                .removesuffix(".csv")
+                + ".js"
+            )
+            history_payloads[relative] = pack_history(
+                history_rows, path.relative_to(root).as_posix()
+            )
+            history.append(
+                {
+                    "path": relative,
+                    "first": min(r[0][:10] for r in history_rows),
+                    "last": max(r[1][:10] for r in history_rows),
+                    "rows": len(history_rows),
+                    "titles": sum(r[6] == "title" for r in history_rows),
+                    "searches": sum(r[6] == "search" for r in history_rows),
+                }
+            )
         carry = {k: v for k, v in apps.items() if v[1] >= boundary}
     lookup_last = {}
     for event in sorted(lookups, key=lambda r: (r["start_utc"], r["activity_id"])):
@@ -498,10 +546,18 @@ def build_data(
             ],
             key=lambda r: (-r["days"], -r["sessions"], r["term"]),
         )
+    for period in periods.values():
+        for row in period["apps"]:
+            row["icon"] = app_icons.get(tuple(row[k] for k in APP_FIELDS), "")
     for value in inventory.values():
         value["days"] = len(value["days"])
     return {
         "device_id": profile.device_id,
+        "profile": profile.name,
+        "source_max_end": source_max_end,
+        "icons": icons,
+        "history": history,
+        "_history_payloads": history_payloads,
         "timezone": str(tz),
         "first": datetime.fromtimestamp(first, tz).isoformat(),
         "last": datetime.fromtimestamp(last, tz).isoformat(),

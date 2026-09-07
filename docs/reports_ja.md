@@ -1,124 +1,240 @@
 # PC利用レポート
 
-`build-report`は、取得済みCSVからPC別のローカルHTMLを作成します。
-全期間・年間・月間・週間をページ内で切り替え、アプリ、サイト、曜日と時間帯、辞書で調べた語句を確認できます。
-外部通信、CDN、生成AI、別のWebサーバー、Node.jsは不要です。
+`build-report` は取得済みCSVからローカルHTMLを生成します。入口は一つの `index.html` です。
+年・月・週のフィルターと同じ場所で「すべてのPC」と個々のprofileを切り替えられます。
+アプリのアイコン、利用時間、サイト、曜日・時間帯、辞書で調べた語句を確認できます。
+別ページでウィンドウタイトルを検索し、Google・Bingなどの検索語の履歴も閲覧できます。
+外部通信、CDN、AI、Webサーバー、Node.jsは実行時に不要です。
 
-## 設定と使い方
+## 初回設定と基本操作
 
-通常のユーザー設定は`~/.tkn/manictime_data_pipeline/config.yaml`です。
-既存の取得設定に次の共通設定を加えます。プロファイル内には置きません。
+共通設定の例です。出力先にPC名を含める必要はありません。
 
 ```yaml
-schema_version: "2.2.0"
+schema_version: "2.3.0"
 report_path: ~/.tkn/manictime_data_pipeline/reports
 report_timezone: Asia/Tokyo
 report_lookup_gap_minutes: 30
-# 必要なときだけ指定する、ユーザー管理の補足CSV:
-# application_rules_path: C:/path/to/application_rules.csv
-# site_rules_path: C:/path/to/site_rules.csv
+# 次の3つは既定値なので、通常は設定不要です。
+# application_rules_path: ~/.tkn/manictime_data_pipeline/rules/application_rules.csv
+# site_rules_path: ~/.tkn/manictime_data_pipeline/rules/site_rules.csv
+# extraction_rules_path: ~/.tkn/manictime_data_pipeline/rules/extraction_rules.yaml
 ```
 
-`report_path`の既定値は、Raw/CSVを置く`data`と区別した`reports`です。
-指定したフォルダ直下に`index.html`を作り、その下の`devices`にPC別レポートを置きます。
-CLIがデバイス別フォルダを作るため、設定値にPC名を含めません。
-入力・Raw・抽出CSV・stateと互いに包含する出力先は拒否します。
-通常のファイルが置かれたフォルダを使うことはできますが、未管理の`index.html`を上書きしません。
+初回はルールファイルを作成します。各profileの `ingest` が成功した後に実行してください。
 
 ```console
-tkn-manictime-pipeline build-report --dry-run
-tkn-manictime-pipeline build-report
+tkn-manictime-pipeline rules init
+tkn-manictime-pipeline build-report --all --dry-run
+tkn-manictime-pipeline build-report --all
 ```
 
-通常実行はHTMLと補助CSVを生成し、完成した入口をOS既定のブラウザで開きます。
-`--no-open`はブラウザ起動だけを抑止します。ブラウザ起動失敗でも生成結果は保持し、パスを表示します。
-進捗と結果のパスは標準エラーに表示し、このコマンドは標準出力へJSONを追加しません。
+通常実行は書き込み後、OSの既定ブラウザで `index.html` を開きます。
+`--no-open` はブラウザ起動だけを抑制します。ブラウザ起動に失敗しても生成物は残ります。
+`--dry-run` は検証・集計だけを行い、ファイル、ロック、ブラウザを作成・起動しません。
+進捗と出力先はstderrに表示し、このコマンドはstdoutにJSONを出力しません。
 
-既定では、設定にある**全プロファイル**が対象です。`default_profile`は対象を絞りません。
-これは1プロファイルを取得する`ingest`との違いです。
-`--profile NAME`を付けると1台だけ更新し、既存の他PCへの入口を維持します。
-全対象に成功済みの取得記録が必要で、不足していれば明示的に停止します。
+既定の出力先 `reports` は、人が閲覧するレポートをRaw・CSVの `data` と分離するためのものです。
+`report_path` は自由に変更できますが、入力、Raw、CSV、stateと親子関係を含めて重なる配置は使えません。
+無関係な通常ファイルは共存できます。管理対象でない `index.html` は上書きしません。
 
-```console
-tkn-manictime-pipeline build-report --profile current-pc --no-open
-```
+## 更新するPCと、表示するPC
 
-## 毎週の運用
-
-先に対象PCの`ingest`を成功させ、その後で次を実行します。
+通常の `build-report` は、`ingest` と同じく **default_profileだけを更新**します。
+`--profile NAME` で指定PC、`--all` で設定済みの全PCを更新します。両方の同時指定はエラーです。
+選択したPCに取得成功の記録がなければ、処理を止めます。
 
 ```console
 tkn-manictime-pipeline build-report --no-open
+tkn-manictime-pipeline build-report --profile current-pc --no-open
+tkn-manictime-pipeline build-report --all --no-open
 ```
 
-レポートコマンド自体は取得処理を呼びません。Windows Task Schedulerには、インストール済み
-`tkn-manictime-pipeline`の絶対パスと上の引数を指定できます。設定は絶対パスを使い、必要なら
-`--config C:/path/to/config.yaml`を指定してください。CLIはスケジュールを登録しません。
+更新対象でない旧PCも、以前に生成したデータを使って同じ画面に表示します。
+各PCの最終記録日と入力確定日時を画面に表示します。未生成のprofileも表示で知らせます。
+設定から削除されたprofileでも、生成済みレポートは保持します。
+現役PCが2台になったら、それぞれを `ingest` した後に `build-report --all` を使います。
+分類・抽出ルールの変更後も `--all` で全PCに反映してください。異なるルールで生成されたPCが
+混ざる場合は画面に表示します。異なるタイムゾーンのレポートは、`--all` で揃えるまで統合できません。
 
-手動で期間を指定する必要はなく、保存済みの全履歴を対象にします。入力CSV、分類ルール、
-集計日境界、生成ロジックが変われば再生成し、同じ条件で出力が揃っていれば再利用します。
-当日分はレポートのタイムゾーンにおける午前0時で切り、翌日の実行以降に反映します。
-週は月曜〜日曜、月・年は暦です。進行中または記録範囲の端にある期間も表示し、一部期間であることを示します。
+統合表示の時間は **PCごとの時間の合計**です。同時に2台を使うと重複を含むため、本人の経過時間では
+ありません。記録日数と語句を調べた日数は、PCをまたいで同じ暦日を重複カウントしません。
+辞書のセッションはPCごとに区別します。曜日・時間帯はPC時間を合算し、記録のある暦日数で割ります。
 
-## 時間と分類の意味
+## 毎週の実行と再利用
 
-- **前面表示時間**: Applications/Documentsに記録された区間の経過秒数。
-- **Active中の前面表示時間**: 上記とComputerUsageのActive区間との重なり。ランキングの既定です。
-- **サイト特定率**: Active中のブラウザ時間のうち、関連アプリと重なり、URLを特定できた時間の割合。
-- **閲覧区間数**: 各期間に重なる元のURL記録の数。ページ読み込み、通信、検索の回数ではありません。
-- **曜日・時刻**: 同じ曜日の記録のある日数で割った、1日あたりのActive分数。
+このコマンドは取得処理を行いません。取得成功後に `build-report --no-open`、複数現役PCなら
+`build-report --all --no-open` を実行します。タスクスケジューラにはインストール済み実行ファイルの
+絶対パスと引数を設定します。必要なら `--config C:/path/to/config.yaml` を指定します。
+CLI自体はスケジュールを登録しません。
 
-時間はUTCの実時間から計算し、指定タイムゾーンの時間・日境界で分割します。
-日付をまたぐ区間を開始日に一括加算せず、ISO週年と暦年も区別します。
-アプリ、サイト、PCのActive時間は同じ時間を別の観点で見た値であり、加算できません。
-記録なしは利用ゼロとせず、チャートに欠測を残します。入力のない読書・視聴もあるため、成果や実作業時間の評価はしません。
+入力CSV、分類・抽出ルール、集計条件、集計コードが変わったときに再集計します。
+当日分は `report_timezone` の午前0時で除外し、翌日以降に対象になります。
+入力の最終時刻を過ぎたPCでは、**日付が変わっただけでは再集計しません**。
+HTMLテンプレートや公開処理だけの変更では、検証済みの集計結果と履歴データを再利用します。
+ただし、再利用時にも入力・出力のハッシュ検証と統合ページ用のデータ読み込みは行うため、
+ディスクI/OやCPU使用量が完全にゼロになるわけではありません。
 
-アプリは`Browser`、`Desktop app`、`System / Shell`、`Unknown`で分類します。
-代表的な実行ファイルに既定分類があり、該当しないものは未分類として保持します。
-Chrome/Edgeの現在のグループ実行パスから過去のチャネルを推定しません。
-タイトル末尾の明示的なBeta/Devなど、またはユーザーの補足ルールで識別できたものだけ区別します。
-系列別・大分類別では日付の集合を統合し、複数チャネルを使った日を重複して数えません。
+週は月曜〜日曜のISO週、年・月は暦に従います。進行中や記録範囲の端にある期間も表示し、
+一部だけ記録があることを示します。欠測期間を未使用のゼロとして扱いません。
 
-## 補足CSV
+## 時間の意味
 
-同梱例は`src/manictime_pipeline/resources/application_rules.example.csv`と
-`site_rules.example.csv`です。ユーザー管理の場所にコピーし、必要なら設定へパスを追加します。
-補足CSVはレポート出力先および抽出CSVフォルダとは別に置きます。
-生成された`application_inventory.csv`で、長く使う未分類アプリから確認できます。
+| 指標 | 定義 |
+| --- | --- |
+| 前面表示すべて | Applications/Documentsの記録区間の経過秒数 |
+| Active中の前面表示 | 上記とComputerUsageのActive判定区間が重なる秒数。ランキングの既定値 |
+| サイト特定率 | URLと関連アプリの区間が重なるActive秒数 ÷ ブラウザのActive中の前面表示時間 |
+| 閲覧区間数 | 対象期間に重なるURLの記録数。通信回数・ページロード回数・検索実行回数ではない |
+| 曜日・時間帯 | 同じ曜日に記録のある日数で割った、1日あたりのActive分数 |
 
-アプリ分類CSVの列は次のとおりです。
+UTC時刻から指定タイムゾーンへ変換し、時間・日・週・月・年の境界で秒数を分割します。
+アプリ・サイト・PCは同じ時間の異なる内訳で、相互に加算できません。
+読書や視聴は入力が少ない場合もあり、これらの時間から生産性、成果、実作業時間を評価しません。
+
+## 編集するルールファイル
+
+`rules init` は次の場所に初期ファイルをコピーします。configへのパス指定は不要です。
 
 ```text
-device_id,valid_from,valid_to,match_field,pattern,category,family,channel,purpose
+~/.tkn/manictime_data_pipeline/rules/
+  application_rules.csv
+  site_rules.csv
+  extraction_rules.yaml
 ```
 
-上から最初に一致した行を使い、組み込み分類より優先します。`match_field`は`key`、`name`、
-`title`、`file_name`のいずれかです。`pattern`は大文字小文字を区別しないglobで、`*`などを使えます。
-PCと適用日（YYYY-MM-DD、両端を含む）は空欄なら制限なしです。適用日は活動開始日の現地日付です。
-`category`と`family`は必須で、`channel`と`purpose`は任意です。
-実行パスが失われた履歴のチャネルを補足CSVだけで復元できるわけではありません。
+既存ファイルは編集内容ごと保持します。`rules init --dry-run` は予定だけを表示します。
+別の場所を使う場合にだけ、対応する3つのパス設定を変更します。
+`build-report` はキャッシュを再利用する場合も **毎回3ファイルすべてを読み込み**ます。
+不足・書式エラーがあれば停止します。`rules init` は不足分だけを復元できます。
+ルールなしにするには、CSVのヘッダーを残すか、抽出YAMLを `rules: []` にしてください。
+インストールの更新でユーザー用ファイルは上書きしません。新しい初期例の変更は必要なものだけ取り込みます。
 
-サイト分類CSVは`host,service,purpose`です。小文字に正規化したホスト名で完全一致し、重複は拒否します。
-サブドメインを勝手に統合しません。サービス名と用途はサイト明細へ表示します。
+ルールは全profileで共有し、レポートのPC別フォルダにはコピーしません。
+生成物や入力・Raw・CSV・stateの外側で管理します。CSVは通常のUTF-8（BOMも可）で、
+カンマや改行を含むセルはCSV形式で引用します。取得CSV専用のバックスラッシュ表現は使いません。
 
-## 辞書の語句
+### application_rules.csv：アプリの分類
 
-Weblio英和、Cambridge、Oxford Learner's DictionariesのURLから見出し語を抽出し、
-対応するURL形式でなければ既知のタイトル形式を補助に使います。検索表記、見出し語、URL、
-タイトル、元CSV・タイムライン・活動IDを保持します。タイトルはURL記録の関連アプリIDから取得します。
-単純な小文字化・Unicode正規化とOxfordの語義番号除去を行い、活用形の自動統合や意味の推測はしません。
+生成された `application_inventory.csv` で実際の `key`・`name` と利用時間を確認してからルールを追加します。
+上から最初に一致した行を採用し、コード内の既定分類より優先します。狭い条件を上に置いてください。
 
-同じ語句を同じ日に既定30分以内の間隔で続けて見た記録を、辞書をまたいでも1セッションにまとめます。
-`report_lookup_gap_minutes`は1〜240で変更できます。日数・セッション数・区間数を区別し、
-閲覧開始日で数えます。抽出不能の辞書記録も別CSVへ残します。
-画面の閲覧明細は先頭500件までで、全件はCSV/JSONへ保存します。
+| 列 | 意味 |
+| --- | --- |
+| `device_id` | configのdevice_idと完全一致。**profile名ではありません**。空欄は全PC |
+| `valid_from`, `valid_to` | 現地時刻での活動開始日。YYYY-MM-DD、両端を含む。空欄は制限なし |
+| `match_field` | `key`＝Ar_Group.Key、`name`＝Ar_Group.Name、`title`＝ウィンドウタイトル、`file_name`＝メタデータの実行ファイル名（なければKeyの先頭部分） |
+| `pattern` | 大文字・小文字を区別しないglob。`*`＝任意の文字列、`?`＝1文字、`[abc]`＝文字集合。正規表現ではない |
+| `category` | 必須。`Browser`、`Desktop app`、`System / Shell`、`Unknown` のいずれか |
+| `family` | 必須。`Chrome`、`VS Code` など、系列としてまとめる名前 |
+| `channel` | 任意。`Dev`、`Beta`、`Stable` など。一致したルールの空欄は `Unknown` |
+| `purpose` | 任意の用途ラベル。CSV/JSONに保存。現時点ではHTMLの用途フィルターはない |
 
-## 出力と保存の契約
+```csv
+device_id,valid_from,valid_to,match_field,pattern,category,family,channel,purpose
+,,,title,*Google Chrome Dev,Browser,Chrome,Dev,Research
+,,,file_name,code.exe,Desktop app,VS Code,,Development
+```
+
+1行目は末尾がGoogle Chrome Devのタイトル、2行目はVS Codeの実行ファイルを分類します。
+既定では一般的な実行ファイルを分類し、それ以外は未分類に残します。
+現在のグループのインストール先から過去のChromeチャネルを推定しません。
+特定PC・期間を限定するルールも、その期間に分類が正しかったという別の根拠がある場合に使ってください。
+ManicTimeのPNGアイコンは重複を除いてHTMLに埋め込み、アプリ名の左に表示します。
+画像がないアプリは空欄になります。画像からチャネルを判定しません。
+
+### site_rules.csv：サイトの表示名と用途
+
+| 列 | 意味 |
+| --- | --- |
+| `host` | 必須。`ejje.weblio.jp` などのホスト名。小文字に変換して完全一致。URL・パス・ワイルドカードは使わない。末尾のドットを無視し、`www.` は区別する |
+| `service` | 必須。`Weblio` などの表示名 |
+| `purpose` | 任意。`Dictionary` など、サイト詳細表に表示する用途 |
+
+```csv
+host,service,purpose
+ejje.weblio.jp,Weblio,Dictionary
+```
+
+ホストの重複はエラーです。サブドメインやサービス単位にランキングを自動統合しません。
+未登録のホストもホスト名のままランキングに出ます。
+このCSVは表示名の補足で、**辞書の語句抽出を有効にする設定ではありません**。
+辞書や検索語の抽出は、次のYAMLが担当します。
+
+### extraction_rules.yaml：辞書・検索語の抽出
+
+`build-report` で必ず読むルールファイルです。一般設定の `config.yaml` と分離しています。
+`schema_version: "1.0.0"` と `rules` のリストを持ちます。
+
+| フィールド | 意味 |
+| --- | --- |
+| `id` | 必須。一意で空でないルール名 |
+| `kind` | 必須。`dictionary` または `search` |
+| `hosts` | 必須。小文字のホスト名の配列。ここでは先頭の `www.` を取り除いて完全一致する。Googleの他の地域ホストは明示的に追加する |
+| `path_pattern` | 必須。URLのパスをパーセントデコードして照合するPython正規表現。大文字・小文字を区別しない。辞書では最初のキャプチャ括弧が見出し語。検索では検索結果ページのパスを限定する |
+| `title_pattern` | 辞書用の任意設定。URLから抽出できない場合、関連アプリのタイトルに照合する。最初のキャプチャ括弧が見出し語 |
+| `query_parameter` | 検索語が入るURLパラメーター名。searchでは必須。Google/Bingは `q`。辞書では既定が `q` で、検索時の表記として保存する |
+| `strip_suffix` | 辞書で抽出した語句から取り除く正規表現。例：`'_\d+$'` はOxfordの語義番号を除去する |
+
+```yaml
+schema_version: "1.0.0"
+rules:
+  - id: weblio
+    kind: dictionary
+    hosts: [ejje.weblio.jp]
+    path_pattern: '^/content/([^/]+)'
+    title_pattern: '^(.+?)の意味(?:・使い方)?'
+  - id: google
+    kind: search
+    hosts: [google.com, google.co.jp]
+    path_pattern: '^/search/?$'
+    query_parameter: q
+```
+
+正規表現をYAMLで書くときは、バックスラッシュを保持する単一引用符が便利です。
+同じkindの中で最初に抽出できたルールを採用します。searchはパスの一致と空でない検索語が必要で、
+タイトルだけから検索実行を推測しません。初期ファイルにはWeblio・Cambridge・Oxford・
+Google（.com/.co.jp）・Bingを含めています。
+変更後は `build-report --all --dry-run` で実データを使って検証し、`--all --no-open` で反映します。
+
+## 辞書で調べた語句
+
+URLの見出し語を優先し、設定したタイトル形式を代替に使います。
+見出し語、検索表記、URL、関連ウィンドウタイトル、CSV、タイムラインID、活動IDを保持します。
+NFKC正規化、小文字化、設定した語義番号の除去を行いますが、活用形や意味の自動統合はしません。
+
+同じPC・同じ日・同じ語句を30分以内の間隔で続けて閲覧した区間は、辞書をまたいでも1セッションにします。
+間隔は `report_lookup_gap_minutes`（1〜240分）で変更できます。日数、セッション数、閲覧区間数は別の値で、
+閲覧開始日に帰属します。抽出できなかった辞書記録は別CSVに残します。
+HTMLの根拠表は500件までで、CSV/JSONに全件を保存します。
+
+## タイトル検索と検索語の履歴
+
+メイン画面の履歴リンクから開くと、PCと期間を引き継ぎます。直接開いた場合の初期値は最新記録から30日間です。
+「全期間」で日付制限を解除できます。履歴の種類を選び、含まれる文字を入力して「検索」を押します。
+部分一致で、大文字・小文字や全角・半角を区別しません。
+
+現地時刻の表示開始・終了、PC、アプリ、タイトルまたは検索語、Active秒数を表示します。
+各行の「記録の根拠」で元CSV・ReportId・ActivityIdを確認できます。検索語には元URLもあります。
+Active秒数は、その記録区間とPCのActive判定が重なる時間です。
+
+履歴は月別のJavaScriptデータに保存し、重複する文字列は辞書化して容量を抑えています。
+検索時に該当する月だけを順次読み込みます。全一致件数と最初・最後の日時を示し、
+**新しい順に1,000件まで、1ページ50件**で表示します。さらに古い結果は日付を絞って確認してください。
+中止は現在のファイル読み込み後に反映します。読み込み失敗や中止時は途中結果であることを明示します。
+日付の条件は記録の開始日です。
+
+これらはManicTimeの前面表示・URL区間の記録で、ブラウザの履歴を別途読み取るものではありません。
+検索結果への再訪も含み、検索実行回数や動画の視聴完了、初めて知った正確な瞬間を証明しません。
+URLが記録されていない検索語は復元できません。タイトル全件はメインHTMLや `data.json` に入れません。
+
+## 保存構成とfingerprint
 
 ```text
 <report_path>/
   index.html
   report-manifest.json
+  history-<hash>.html
   devices/<device_id>/<fingerprint>/
     index.html
     data.json
@@ -129,25 +245,38 @@ Weblio英和、Cambridge、Oxford Learner's DictionariesのURLから見出し語
     unresolved_dictionary.csv
     application_inventory.csv
     manifest.json
+    history/YYYY-MM.js
 ```
 
-1PCのHTMLには全期間の集計と画面処理を埋め込み、ファイルを開くだけで切り替えられます。
-補助CSVの時間単位は秒で、UTF-8 BOM付きです。リスト列は`;`区切りです。
-タイトル等が表計算の式として解釈される場合はCSVで先頭に`'`を付けます。元の文字列はJSONに保持します。
-アプリやサイトのCSVは複数の時間軸を収録するため、`period`を絞って使用してください。
-異なる時間軸を合計すると同じ活動を重複計上します。
+`<fingerprint>` は **入力CSV、分類・抽出ルール、集計条件、生成コード、HTMLテンプレートから計算した
+SHA-256の値**です。PCのIDや毎回変わる乱数ではなく、生成条件を識別します。
+表示だけの変更でも別の値になるため、見た目が似た世代が並ぶことがあります。
+集計用の署名を別に持ち、表示だけの変更では集計結果を再利用します。
 
-入力は成功済み取得記録のmanifestと、全CSVのハッシュを照合します。PCの識別子と内容が同じなら、
-保存先やプロファイル名が取得時から変わったCSVもレポートでは読めます。取得側の厳密な同一性検査は変更しません。
-通常実行は取得側と共通のロックで同時更新を防ぎ、復旧待ちの取得があれば停止します。
-dry-runはロックファイルも作らず、前後の取得記録とCSVを再照合します。
-同じタイムライン内の重複区間は曖昧な二重計上を避けるためエラーにします。
-不正時刻、長さが正でない記録、当日分の除外件数は品質情報に記録します。
+入口HTMLには生成済みPCの集計データ、履歴HTMLには小さなファイル一覧を埋め込みます。
+PC別フォルダは再利用用の集計結果とCSVの保存先として残ります。
+補助CSVは秒数・UTF-8 BOM付き・リストセルはセミコロン区切りです。
+表計算ソフトが数式として実行しうる文字列には先頭にアポストロフィを付け、原文はJSONに残します。
+アプリ・サイトCSVを再集計する際は `period` を1種類に絞ってください。複数の時間軸を加算すると重複します。
 
-PC別の世代がすべて完成してから入口を切り替えます。最新と直前の生成世代を保持し、
-さらに古い世代はmanifestにあるファイルだけをハッシュ検証後に削除します。
-手編集・追加ファイルがある古い世代は保持します。入力・Raw・stateの取得記録を削除・変更しません。
-中断後は同じコマンドを再実行できます。完成していない世代は入口からリンクしません。
-同じ世代の手編集があれば上書きせず停止します。レポートは生成物なので、変更は分類CSVへ反映してください。
+入力は取得成功manifestとCSVの全ハッシュで検証します。device_idと内容が同じであれば、移動したCSVを
+元のprofile名・パスが異なっていても読み取れます。ingest自身の厳密な同一性チェックは変更しません。
+通常実行はingestと同じロックを共有し、未復旧の更新があれば停止します。
+同一タイムラインの重複区間はエラーにし、不正時刻・非正区間・当日除外などは品質情報に記録します。
 
-Itadakiの入力イベントとの統合は次段階です。今回のレポートは入力先や生産性を推定しません。
+選択PCの生成がすべて終わってから入口を切り替えます。履歴ページも最新と直前を保持します。
+PCごとに最新と直前の世代を残し、それより古い世代は
+manifestに載るファイルの内容と配置を検証してから削除します。編集・追加ファイルがある世代は保持します。
+中断後は同じコマンドを再実行できます。同一世代の編集済みファイルを上書きしません。
+入力、Raw、ingestの履歴は変更しません。生成HTMLを直接編集せず、ルールから調整してください。
+
+## docsのJSON例について
+
+[`current.example.json`](current.example.json) はingestの確定済み実行を指すポインター、
+[`manifest.example.json`](manifest.example.json) はingestの実行記録の保存形式を示す、読み手向けの見本です。
+ハッシュは仮の値で、実行可能な設定ではありません。READMEから参照し、アプリのコードは読み込みません。
+レポートのmanifestとは別です。保存形式の説明なので `docs` に置いています。
+一方、インストールしたコマンドが読むHTML・設定・ルールの初期ファイルは
+`src/manictime_pipeline/resources` に含めます。
+
+Itadakiの入力イベントとの突き合わせは次の段階です。入力先アプリや生産性は推測しません。

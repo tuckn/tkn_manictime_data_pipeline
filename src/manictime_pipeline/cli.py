@@ -16,6 +16,7 @@ from .config import config_show, initialize_config, load_config, selected_profil
 from .database import inspect_source
 from .logging_utils import SUCCESS, configure
 from .pipeline import ingest, recover, verify
+from .report_rules import initialize_rules
 from .reports import build_report
 
 
@@ -26,8 +27,7 @@ def parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "--profile",
-        help="Select one profile by name; build-report defaults to all, "
-        "other commands use default_profile (not a file path)",
+        help="Select one profile by name; defaults to default_profile (not a file path)",
     )
     verbosity = common.add_mutually_exclusive_group()
     verbosity.add_argument("-q", "--quiet", action="store_true", help="Only errors on stderr")
@@ -48,6 +48,12 @@ def parser() -> argparse.ArgumentParser:
     config_commands.add_parser(
         "show", parents=[common], help="Show resolved values and winning sources"
     )
+    rules = commands.add_parser("rules", parents=[common], help="Create editable report rules")
+    rules_commands = rules.add_subparsers(dest="rules_command", required=True)
+    rules_init = rules_commands.add_parser(
+        "init", parents=[common], help="Create missing rule files; preserve existing files"
+    )
+    rules_init.add_argument("--dry-run", action="store_true", help="Preview without writing")
     commands.add_parser("inspect", parents=[common], help="Read DB schema, counts and date range")
     run = commands.add_parser(
         "ingest",
@@ -70,10 +76,16 @@ def parser() -> argparse.ArgumentParser:
     report = commands.add_parser(
         "build-report",
         parents=[common],
-        help="Build local HTML reports for all configured PCs (writes by default)",
+        help="Update the default PC and build a combined HTML report (writes by default)",
         description="Read successfully ingested CSV and build year/month/week HTML reports. "
-        "All configured profiles are included unless --profile is supplied. Excludes today; "
+        "Updates default_profile; --all updates every profile. Previously built PCs stay visible. "
+        "Excludes today; "
         "does not ingest or contact the network. Opens the report after success.",
+    )
+    report.add_argument(
+        "--all",
+        action="store_true",
+        help="Update all configured profiles; cannot combine with --profile",
     )
     report.add_argument(
         "--dry-run",
@@ -112,8 +124,10 @@ def main(argv: list[str] | None = None) -> int:
             config = load_config(explicit, profile_name)
             if args.command == "config":
                 result = config_show(config)
+            elif args.command == "rules":
+                result = initialize_rules(config["values"], args.dry_run)
             elif args.command == "build-report":
-                result = build_report(config, args.dry_run, profile_name)
+                result = build_report(config, args.dry_run, profile_name, args.all)
                 for device in result["devices"]:
                     logging.info(
                         "%s: %s, %s days, %s periods, %s dictionary records",

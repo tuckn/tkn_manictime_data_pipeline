@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-SCHEMA_VERSION = "2.2.0"
+SCHEMA_VERSION = "2.3.0"
 PROFILE_KEYS = {"device_id", "source_path", "raw_path", "processed_data_path"}
 REQUIRED_PROFILE_KEYS = {"device_id", "source_path"}
 OUTPUT_KEYS = ("raw_path", "processed_data_path")
@@ -27,6 +27,7 @@ TOP_KEYS = {
     "report_timezone",
     "application_rules_path",
     "site_rules_path",
+    "extraction_rules_path",
     "report_lookup_gap_minutes",
 }
 
@@ -83,9 +84,9 @@ def _validate(data: object, source: Path) -> dict:
     if unknown:
         raise ValueError(f"Unknown config keys in {source}: {sorted(unknown)}")
     version = data.get("schema_version")
-    if not isinstance(version, str) or not re.fullmatch(r"2\.[012]\.\d+", version):
+    if not isinstance(version, str) or not re.fullmatch(r"2\.[0123]\.\d+", version):
         raise ValueError(
-            f"Unsupported schema_version {version!r} in {source}; supported: 2.0.x to 2.2.x."
+            f"Unsupported schema_version {version!r} in {source}; supported: 2.0.x to 2.3.x."
         )
     for key, value in data.items():
         if key in {"schema_version", "profiles"}:
@@ -170,6 +171,9 @@ def load_config(explicit: Path | None = None, profile_name: str | None = None) -
         "report_path": str(app_root() / "reports"),
         "report_timezone": "Asia/Tokyo",
         "report_lookup_gap_minutes": 30,
+        "application_rules_path": str(app_root() / "rules/application_rules.csv"),
+        "site_rules_path": str(app_root() / "rules/site_rules.csv"),
+        "extraction_rules_path": str(app_root() / "rules/extraction_rules.yaml"),
         "profiles": {},
     }
     origins = {key: "built-in" for key in values if key != "profiles"}
@@ -279,6 +283,7 @@ def config_show(config: dict) -> dict:
         "report_path",
         "application_rules_path",
         "site_rules_path",
+        "extraction_rules_path",
         *OUTPUT_KEYS,
     ):
         if key in values:
