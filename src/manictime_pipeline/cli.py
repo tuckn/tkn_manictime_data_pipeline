@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import sqlite3
+import webbrowser
 from pathlib import Path
 
 import yaml
@@ -15,6 +16,7 @@ from .config import config_show, initialize_config, load_config, selected_profil
 from .database import inspect_source
 from .logging_utils import SUCCESS, configure
 from .pipeline import ingest, recover, verify
+from .reports import build_report
 
 
 def parser() -> argparse.ArgumentParser:
@@ -24,7 +26,8 @@ def parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "--profile",
-        help="Profile name in merged config; defaults to default_profile (not a file path)",
+        help="Select one profile by name; build-report defaults to all, "
+        "other commands use default_profile (not a file path)",
     )
     verbosity = common.add_mutually_exclusive_group()
     verbosity.add_argument("-q", "--quiet", action="store_true", help="Only errors on stderr")
@@ -32,7 +35,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         prog="tkn-manictime-pipeline",
         parents=[common],
-        description="Keep the latest ManicTime DBs and export changed CSV partitions. Local-only.",
+        description="Keep the latest ManicTime DBs, export CSV and build local HTML reports.",
     )
     root.add_argument("--version", action="version", version=__version__)
     commands = root.add_subparsers(dest="command", required=True)
@@ -64,6 +67,22 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "verify", parents=[common], help="Verify published CSV against its Raw capture"
     )
+    report = commands.add_parser(
+        "build-report",
+        parents=[common],
+        help="Build local HTML reports for all configured PCs (writes by default)",
+        description="Read successfully ingested CSV and build year/month/week HTML reports. "
+        "All configured profiles are included unless --profile is supplied. Excludes today; "
+        "does not ingest or contact the network. Opens the report after success.",
+    )
+    report.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and aggregate without writes or browser launch",
+    )
+    report.add_argument(
+        "--no-open", action="store_true", help="Do not open the browser (for weekly scheduled runs)"
+    )
     command = commands.add_parser(
         "recover",
         parents=[common],
@@ -93,6 +112,26 @@ def main(argv: list[str] | None = None) -> int:
             config = load_config(explicit, profile_name)
             if args.command == "config":
                 result = config_show(config)
+            elif args.command == "build-report":
+                result = build_report(config, args.dry_run, profile_name)
+                for device in result["devices"]:
+                    logging.info(
+                        "%s: %s, %s days, %s periods, %s dictionary records",
+                        device["device_id"],
+                        device["action"],
+                        device["days"],
+                        device["periods"],
+                        device["dictionary_records"],
+                    )
+                logging.info("Report: %s", result["index"])
+                if not args.dry_run and not args.no_open:
+                    try:
+                        if not webbrowser.open(Path(result["index"]).as_uri(), new=2):
+                            logging.warning(
+                                "Browser could not open the report: %s", result["index"]
+                            )
+                    except (OSError, webbrowser.Error) as exc:
+                        logging.warning("Report created; browser could not open: %s", exc)
             else:
                 profile = selected_profile(config)
                 if args.command == "inspect":
@@ -104,11 +143,15 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     result = verify(profile)
         logging.log(SUCCESS, "%s completed", args.command)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.command != "build-report":
+            print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (ValueError, OSError, sqlite3.Error, yaml.YAMLError, KeyError, TypeError) as exc:
         logging.error("%s", exc, exc_info=verbose)
         return 1
     except KeyboardInterrupt:
-        logging.error("Interrupted; run recover before reading Raw or CSV data")
+        if args.command == "build-report":
+            logging.error("Interrupted; rerun build-report to finish the report")
+        else:
+            logging.error("Interrupted; run recover before reading Raw or CSV data")
         return 130

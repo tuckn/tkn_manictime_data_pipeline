@@ -1,10 +1,17 @@
-schema_version: "2.1.0"
+schema_version: "2.2.0"
 default_profile: current-pc
 
 # Parent folder for the latest ManicTime database copies (one generation per device).
 raw_path: ~/.tkn/manictime_data_pipeline/data/raw
 # Parent folder for extracted CSV data.
 processed_data_path: ~/.tkn/manictime_data_pipeline/data/csv
+# Human-facing, offline HTML reports and supporting CSVs. The command adds device subfolders.
+report_path: ~/.tkn/manictime_data_pipeline/reports
+report_timezone: Asia/Tokyo
+report_lookup_gap_minutes: 30
+# Optional, user-maintained CSV mappings, stored outside the report and extracted CSV folders.
+# application_rules_path: C:/path/to/application_rules.csv
+# site_rules_path: C:/path/to/site_rules.csv
 # Durable checkpoints, provenance, run records and recovery files; not disposable cache.
 # state_path defaults to ~/.tkn/manictime_data_pipeline/state
 backup_timeout_seconds: 300

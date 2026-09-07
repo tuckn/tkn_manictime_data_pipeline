@@ -6,8 +6,9 @@ Save the latest copies of ManicTime's SQLite databases as Raw and export reusabl
 The first run exports all available activity history and related tables; later runs
 replace only changed month/table CSVs at fixed paths. Raw keeps one current generation;
 CSV folders contain the latest data, and state holds provenance and checkpoints.
-The CLI covers acquisition, extraction, execution records and verification;
-HTML reports, classification rules, AI advice and cross-source integration are future work.
+Build local HTML reports from ingested CSV, with per-PC year/month/week views,
+application and website time, time-of-day patterns and dictionary lookups.
+AI advice and cross-source integration remain future work.
 
 ## Use it — from installation to the first result
 
@@ -18,6 +19,7 @@ output without writing pipeline data, configuration, state, cache or temporary f
 | ---------- | ------------------------------------------------------------------------------------ |
 | `ingest` | Capture both DBs, compare partitions, export changes and publish the latest manifest |
 | `verify` | Check CSV, Raw checksums and the correspondence between the two                      |
+| `build-report` | Create HTML reports and supporting CSV for all ingested PCs |
 
 ### Requirements and installation
 
@@ -109,6 +111,14 @@ for example `Ar_Group/all.csv` or `Ar_Timeline/all.csv`. Only `Ar_Activity` is s
 Read Raw and CSV **after ingest succeeds**, not while it is running. Replacement is per file;
 an arbitrary reader can see different run versions across multiple files during an update.
 
+## HTML activity reports
+
+Use `tkn-manictime-pipeline build-report` to generate reports for all configured PCs and open
+`<report_path>/index.html`. For weekly scheduled runs, use `build-report --no-open` after ingest.
+The default output is `~/.tkn/manictime_data_pipeline/reports`; set the top-level `report_path`
+in YAML to change it. `--dry-run` validates and aggregates without writes or browser launch.
+See [report setup, metrics, mappings and outputs](docs/reports.md).
+
 ## Command reference
 
 | Purpose                                                 | Command                     |
@@ -118,6 +128,7 @@ an arbitrary reader can see different run versions across multiple files during 
 | Inspect source schema, row counts and activity range    | `inspect`                 |
 | Capture and incrementally publish CSV                   | `ingest [--dry-run]`      |
 | Verify the current dataset and its Raw capture          | `verify`                  |
+| Build year/month/week HTML for all PCs | `build-report [--dry-run] [--no-open]` |
 | Recover an interrupted CSV update | `recover [--dry-run]` |
 
 Common options: `--config PATH`, `--profile NAME`, `-q/--quiet` and `-v/--verbose`.
@@ -140,7 +151,7 @@ Raw is deleted after a successful commit.
 
 ## Configuration details
 
-Each YAML file declares `schema_version: "2.1.0"`. Versions 2.0.x and 2.1.x are accepted;
+Each YAML file declares `schema_version: "2.2.0"`. Versions 2.0.x through 2.2.x are accepted;
 unsupported major/minor versions, duplicate/unknown keys and incorrect types are errors.
 Each layer is validated before merging, so a higher layer cannot hide an invalid lower layer.
 Published state and run records use schema 3.0.0 and the latest Raw layout.

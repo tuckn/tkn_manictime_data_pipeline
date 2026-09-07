@@ -1,0 +1,4 @@
+device_id,valid_from,valid_to,match_field,pattern,category,family,channel,purpose
+,,,file_name,code.exe,Desktop app,VS Code,,Development
+,,,title,*Google Chrome Dev,Browser,Chrome,Dev,
+,,,title,*Google Chrome Beta,Browser,Chrome,Beta,
