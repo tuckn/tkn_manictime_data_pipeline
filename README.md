@@ -1,36 +1,56 @@
-# ManicTime Data Pipeline
+# tkn-manictime-pipeline: Tkn ManicTime Data Pipeline
 
-[日本語](README_ja.md)
+ManicTime の SQLite DB の最新コピーを Raw として保存し、再利用できる CSV を抽出する CLI です。
+初回は全期間の活動と関連テーブルを出力し、次回からは変更のあった月・テーブルだけを更新します。
+Raw は最新1世代を保持し、CSV も固定パスに最新データを保存します。来歴・チェックポイントは state に集約します。
+取得済みCSVから、PC別に年・月・週を切り替えられるローカルHTMLレポートも生成します。
+アプリ・サイトの利用時間、時間帯、辞書で調べた語句を中立に表示します。
+生成AIの助言と他ソースとの統合は今後の対象です。
 
-Save the latest copies of ManicTime's SQLite databases as Raw and export reusable CSV.
-The first run exports all available activity history and related tables; later runs
-replace only changed month/table CSVs at fixed paths. Raw keeps one current generation;
-CSV folders contain the latest data, and state holds provenance and checkpoints.
-Build local HTML reports from ingested CSV, with per-PC year/month/week views,
-application and website time, time-of-day patterns and dictionary lookups.
-AI advice and cross-source integration remain future work.
+## 処理の全体像
 
-## Use it — from installation to the first result
+矢印はデータの流れを示します。長方形は利用者が個別に実行するコマンド、円筒形は入力または保存データです。
+`ingest` が Raw・CSV・state を更新した後、`verify` は公開済みデータを検証し、`build-report` は CSV と編集用ルールから HTML を生成します。
 
-The normal command writes its outputs. Add `--dry-run` to compare the source and previous
-output without writing pipeline data, configuration, state, cache or temporary files.
+```mermaid
+flowchart LR
+    Core[("ManicTimeCore.db")] --> Ingest["ingest: DBを取得・抽出"]
+    Reports[("ManicTimeReports.db")] --> Ingest
+    Ingest --> Raw[("Raw: 最新のDBコピー")]
+    Ingest --> CSV[("CSV: 月別の活動・関連テーブル")]
+    Ingest --> State[("state: 来歴・チェックポイント")]
+    Raw --> Verify["verify: 公開済みデータを検証"]
+    CSV --> Verify
+    State --> Verify
+    CSV --> Build["build-report: HTMLを生成"]
+    State --> Build
+    RulesInit["rules init: 編集用ルールを作成"] --> Rules[("編集用ルール")]
+    Rules --> Build
+    Build --> HTML[("HTMLレポート: index.html")]
+```
 
-| Command    | Result                                                                               |
-| ---------- | ------------------------------------------------------------------------------------ |
-| `ingest` | Capture both DBs, compare partitions, export changes and publish the latest manifest |
-| `verify` | Check CSV, Raw checksums and the correspondence between the two                      |
-| `build-report` | Update default_profile and create a combined HTML report |
+`verify` と `build-report` はそれぞれ独立した操作です。`build-report` の実行前に `rules init` で編集用ルールを用意します。
 
-### Requirements and installation
+## 使い方 — 最初の結果まで
 
-Use Python 3.11+ with its standard `sqlite3` module and uv. Windows is the primary
-tested environment. There is no dependency on a system `sqlite3.exe` or a running
-ManicTime UI. PyYAML is installed with the package. The CLI operates locally without
-network access or AI calls.
+通常実行は保存・更新を行います。`--dry-run` を付けると、入力と前回の出力を比較し、
+パイプラインのデータ・設定・state・cache・一時ファイルを書き込まずに予定を確認します。
 
-**Tested with ManicTime 2023.1.1.0 (64-bit), Standard (free edition).**
+| コマンド   | 得られるもの                                                |
+| ---------- | ----------------------------------------------------------- |
+| `ingest` | 両 DB の Raw 保存、変更判定、CSV 抽出、最新 manifest の公開 |
+| `verify` | CSV・Raw のハッシュと、Raw に対する CSV の一致の検証        |
+| `build-report` | default_profileを更新し、PCを横断するHTMLレポートを生成 |
 
-Replace the example repository path with your checkout:
+### 必要環境とインストール
+
+**動作確認環境：ManicTime 2023.1.1.0（64-bit）、Standard（無料版）。**
+
+Python 3.11 以上と標準の `sqlite3` モジュール、uv を使用します。Windows を主な検証対象としています。
+システムの `sqlite3.exe`、起動中の ManicTime UI は不要です。
+PyYAML はパッケージとともに導入されます。CLI の処理に通信や生成 AI 呼び出しはありません。
+
+次のリポジトリ例を実際のパスに置き換えて実行します。
 
 ```console
 cd "C:\path\to\tkn_manictime_data_pipeline"
@@ -39,23 +59,22 @@ tkn-manictime-pipeline --help
 tkn-manictime-pipeline config init
 ```
 
-Edit the displayed `~/.tkn/manictime_data_pipeline/config.yaml`:
+表示された `~/.tkn/manictime_data_pipeline/config.yaml` を編集します。
 
-- `profiles.current-pc.source_path`: the ManicTime application folder containing `Data`, or the DB folder itself.
-- `profiles.current-pc.device_id`: a name used for the data subfolder; it must be unique across profiles.
-- `raw_path`: parent folder for saved copies of the ManicTime databases. Defaults to `~/.tkn/manictime_data_pipeline/data/raw`.
-- `processed_data_path`: parent folder for extracted CSV data. Defaults to `~/.tkn/manictime_data_pipeline/data/csv`.
+- `profiles.current-pc.source_path`: `Data` を含む ManicTime 本体のフォルダ、または DB 格納フォルダ。
+- `profiles.current-pc.device_id`: データ保存先のサブフォルダ名に使用する、他のプロファイルと重複しない名前。
+- `raw_path`: ManicTime の DB コピーを保存する親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/raw`。
+- `processed_data_path`: 抽出した CSV データを保存する親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/csv`。
 
-Only `source_path` and `device_id` need to be customized to start with the default output folders.
-Both output paths are common settings, with optional per-profile overrides using the same rules.
-The CLI appends `device_id` once to either parent path; do not include it yourself.
+既定の保存先を使う場合、最初に変更するのは `source_path` と `device_id` だけです。
+両方の保存先は共通設定で、必要なプロファイルだけ個別に上書きできます。
+どちらも CLI が親フォルダの下へ `device_id` を一度だけ追加するため、保存先の設定には含めません。
 
-Both `ManicTimeCore.db` and `ManicTimeReports.db` must be present.
-Keep Raw, CSV and execution-record folders outside the folder specified by `source_path`.
-That is the ManicTime application folder when you specify the application root, or the DB
-folder when you specify it directly. Input and output folders must not contain one another.
-The packaged [configuration example](src/manictime_pipeline/resources/config.example.yaml)
-contains the complete initial configuration.
+入力には `ManicTimeCore.db` と `ManicTimeReports.db` の両方が必要です。
+Raw・CSV・実行記録の保存先は、`source_path` に指定したフォルダの外にしてください。
+ManicTime 本体のフォルダを指定した場合は本体フォルダ、DB 格納フォルダを直接指定した場合は
+そのフォルダの外を意味します。入力と出力のフォルダを互いに包含する配置もできません。
+[同梱の設定例](src/manictime_pipeline/resources/config.example.yaml)に初期設定全体があります。
 
 ```console
 tkn-manictime-pipeline config show
@@ -64,32 +83,32 @@ tkn-manictime-pipeline ingest
 tkn-manictime-pipeline verify
 ```
 
-Repeat `ingest` daily or weekly. It includes history on the first run and compares against
-the previous successful publication thereafter. It also captures today's committed data;
-an activity that is still being extended is updated on the next run.
+日常の更新も同じ `ingest` を日次・週次で実行します。初回は全履歴、以後は直前に
+公開できたデータとの比較になります。当日のコミット済みデータも含み、記録中の活動時間の延長は
+次回に反映します。
 
-### Find and use the results
+### 結果を確認・利用する
 
-The command returns absolute output paths as JSON on stdout and progress on stderr.
+実行結果の絶対パスは標準出力の JSON に、進捗は標準エラーに表示されます。
 
-| Location | Purpose |
+| 保存先 | 役割 |
 | --- | --- |
-| `<raw_path>/<device_id>/ManicTimeCore.db` | Latest successful Core snapshot |
-| `<raw_path>/<device_id>/ManicTimeReports.db` | Latest successful Reports snapshot |
-| `<processed_data_path>/<device_id>/Ar_Activity/YYYY/MM.csv` | Current activity data for each month |
-| `<processed_data_path>/<device_id>/<table>/all.csv` | Current related/metadata table |
-| `<state_path>/<profile>/current.json` | Checkpoint pointing to the latest successful run record |
-| `<state_path>/<profile>/runs/<run-id>.json` | Capture metadata, schema, CSV hashes/counts, effective settings and results |
-| `<state_path>/<profile>/transactions/<run-id>/` | Temporary staging, rollback copies and recovery journal |
+| `<raw_path>/<device_id>/ManicTimeCore.db` | 最後に成功した Core のコピー |
+| `<raw_path>/<device_id>/ManicTimeReports.db` | 最後に成功した Reports のコピー |
+| `<processed_data_path>/<device_id>/Ar_Activity/YYYY/MM.csv` | 各月の最新活動データ |
+| `<processed_data_path>/<device_id>/<table>/all.csv` | 関連・メタデータテーブルの最新データ |
+| `<state_path>/<profile>/current.json` | 最後に成功した実行記録を指すチェックポイント |
+| `<state_path>/<profile>/runs/<run-id>.json` | 取得来歴、schema、CSV のハッシュ・件数、実効設定、実行結果 |
+| `<state_path>/<profile>/transactions/<run-id>/` | 更新準備中の CSV、復旧用の旧 CSV、復旧手順の記録 |
 
-`state_path` defaults to `~/.tkn/manictime_data_pipeline/state`. It also holds the process
-locks. **State is durable application data, not disposable cache. Back it up together
-with Raw and CSV.** Removing it loses the checkpoint; ingest refuses to adopt existing CSVs.
-The current Raw folder contains both DBs. During updates only, a temporary `.partial` folder
-holds the candidate/previous DBs. Capture times, source paths, sizes and hashes are in the state run record.
-The format version is recorded in JSON metadata; no version folder is added to the CSV path.
+`state_path` の既定値は `~/.tkn/manictime_data_pipeline/state` です。プロセスのロックもここに置きます。
+**state は削除可能なキャッシュではありません。Raw・CSV とともにバックアップしてください。**
+削除するとチェックポイントを失い、既存 CSV がある状態での ingest は停止します。
+Raw フォルダには両 DB を保存します。更新中だけ、作業用 `.partial` フォルダに候補・旧 DB を一時配置します。
+取得時刻・入力パス・サイズ・ハッシュは state の実行記録に保存します。
+形式のバージョンは JSON 内に記録し、CSV のパスにはバージョンのフォルダを加えません。
 
-After a successful ingest, read activity CSVs directly in Power BI, Python or another tool:
+ingest 成功後は、Power BI や Python などから活動 CSV を直接読み込めます。
 
 ```python
 from pathlib import Path
@@ -99,112 +118,111 @@ activity_csvs = sorted((root / "Ar_Activity").glob("*/*.csv"))
 groups_csv = root / "Ar_Group" / "all.csv"
 ```
 
-No manifest lookup is needed for ordinary data use. For auditing, read the state
-`current.json` and the run record it names. Artifact paths are relative to the device's CSV folder.
-Historical run records describe hashes at that time; the fixed Raw and CSV paths contain
-current data. Old run records alone cannot recreate a past DB or CSV version. Re-extract the
-current data from latest Raw; retain separate backups if historical restoration is required.
+通常のデータ利用で manifest をたどる必要はありません。来歴を調べる場合は state の
+`current.json` と、そこに記載された実行記録を読みます。artifact のパスはデバイス別 CSV フォルダ基準です。
+過去の実行記録は当時のハッシュを表しますが、固定 Raw・CSV パスの内容は最新データです。
+過去の実行記録だけでは、当時の DB や CSV を再現できません。最新データは最新 Raw から再抽出できます。
+過去の状態への復元が必要な場合は、別途バックアップを保持してください。
 
-`all.csv` contains all rows of one related/metadata table at the last successful update,
-for example `Ar_Group/all.csv` or `Ar_Timeline/all.csv`. Only `Ar_Activity` is split by month.
+`all.csv` は、関連・メタデータの1テーブルの全行をまとめた最新の CSV です。
+例えば `Ar_Group/all.csv`、`Ar_Timeline/all.csv` があり、年月で分割するのは `Ar_Activity` だけです。
 
-Read Raw and CSV **after ingest succeeds**, not while it is running. Replacement is per file;
-an arbitrary reader can see different run versions across multiple files during an update.
+Raw・CSV は **ingest の成功後**に読み込んでください。置換はファイル単位で行うため、
+更新中に複数ファイルを読むと、新旧のデータが混在する場合があります。
 
-## HTML activity reports
+## HTML活動レポート
 
-Run `tkn-manictime-pipeline rules init` once to create editable rules in
-`~/.tkn/manictime_data_pipeline/rules`. `build-report` updates **default_profile** and opens
-`<report_path>/index.html`; `--all` updates all configured PCs. Previously built PCs remain
-available in the same page's PC filter. Use `--all` once to include the retired PC, and after
-rule changes. For weekly execution use `build-report --no-open` after ingest, or `--all --no-open`
-when multiple active PCs have been ingested. Titles and search terms have a separate search page.
+初回に `tkn-manictime-pipeline rules init` で `~/.tkn/manictime_data_pipeline/rules` に
+編集用ルールを作成します。`build-report` は **default_profile** を更新して
+`<report_path>/index.html` を開きます。`--all` で全profileを更新します。
+以前に生成した旧PCも、同じ画面のPCフィルターで切り替え・統合できます。
+初回の旧PC追加時とルール変更後には `--all` を使ってください。
+毎週は取得成功後に `build-report --no-open`、複数現役PCなら `--all --no-open` を使います。
+ウィンドウタイトルと検索語の履歴は別ページで検索できます。
 
-The default output is `~/.tkn/manictime_data_pipeline/reports`; override `report_path` in YAML.
-`--dry-run` validates and aggregates without writes or browser launch. `<fingerprint>` is the
-SHA-256 value calculated from input CSV, classification/extraction rules, aggregation conditions,
-generation code and HTML templates. Latest and previous PC generations are retained; unchanged
-retired PCs do not reaggregate merely because the date changes.
-See [report setup, rule column reference, history search and output formats](docs/reports.md).
+既定の出力先は `~/.tkn/manictime_data_pipeline/reports` で、共通設定 `report_path` で変更できます。
+`--dry-run` は書き込み・ブラウザ起動なしで検証と集計を行います。
+`<fingerprint>` は「入力CSV、分類・抽出ルール、集計条件、生成コード、HTMLテンプレートから計算した
+SHA-256の値です」。最新と直前のPC別世代を保持し、旧PCは日付だけが変わっても再集計しません。
+[設定・ルール各列の使い方・履歴検索・保存仕様](docs/reports_ja.md)に詳細があります。
 
-## Command reference
+## コマンド一覧
 
-| Purpose                                                 | Command                     |
-| ------------------------------------------------------- | --------------------------- |
-| Create the user configuration without overwriting edits | `config init [--dry-run]` |
-| Inspect merged values and their sources                 | `config show`             |
-| Inspect source schema, row counts and activity range    | `inspect`                 |
-| Capture and incrementally publish CSV                   | `ingest [--dry-run]`      |
-| Verify the current dataset and its Raw capture          | `verify`                  |
-| Update the default PC (or all PCs) and combined HTML | `build-report [--all] [--dry-run] [--no-open]` |
-| Create missing editable report rules | `rules init [--dry-run]` |
-| Recover an interrupted CSV update | `recover [--dry-run]` |
+| 目的                                       | コマンド                    |
+| ------------------------------------------ | --------------------------- |
+| 編集済み内容を上書きせずユーザー設定を作成 | `config init [--dry-run]` |
+| 解決後の値と、その値を決めた設定元を確認   | `config show`             |
+| 入力 schema・件数・活動期間を確認          | `inspect`                 |
+| Raw 保存と CSV 差分更新                    | `ingest [--dry-run]`      |
+| 最新 CSV と対応する Raw を検証             | `verify`                  |
+| 中断した CSV 更新を復旧 | `recover [--dry-run]` |
+| 既定PC（または全PC）を更新し、統合HTMLを生成 | `build-report [--all] [--dry-run] [--no-open]` |
+| 不足している編集用ルールを作成 | `rules init [--dry-run]` |
 
-Common options: `--config PATH`, `--profile NAME`, `-q/--quiet` and `-v/--verbose`.
-They work before or after the command. Quiet and verbose are mutually exclusive.
-`config init` always targets the user configuration and rejects `--config`/`--profile`.
-It returns unchanged when the template already exists; an edited file is preserved with an error.
+共通オプションは `--config PATH`、`--profile NAME`、
+`-q/--quiet`、`-v/--verbose` です。
+コマンドの前後に指定できます。quiet と verbose は同時指定できません。
+`config init` は常にユーザー設定を対象とし、`--config`・`--profile` を受け付けません。
+同じテンプレートがあれば unchanged、編集済みなら保持したうえでエラーになります。
 
-Exit codes are 0 for success, 1 for expected processing/configuration failures,
-2 for command-line usage errors and 130 for interruption.
-`--quiet` suppresses non-error stderr messages, while result JSON still goes to stdout.
-`--verbose` includes error tracebacks. ANSI color is limited to supported interactive
-terminals and respects `NO_COLOR`.
+終了コードは成功 0、設定・処理エラー 1、引数の使用誤り 2、中断 130 です。
+quiet でも標準出力の結果 JSON は表示されます。verbose ではエラーの traceback も表示します。
+対応した対話端末でのみ ANSI 色を使い、`NO_COLOR` に従います。
 
-`ingest` returns `created`, `updated` or `unchanged` for the CSV dataset.
-Even an unchanged CSV run captures both DBs and records a new execution. It updates the
-latest Raw if its bytes differ; it does not accumulate an archive for every invocation.
-`removed` counts partitions removed from both the current index and the fixed CSV paths.
-Only tracked derived data is replaced/removed. Source DBs are preserved; superseded current
-Raw is deleted after a successful commit.
+`ingest` の created / updated / unchanged は **CSV データセット**に対する状態です。
+CSV が unchanged でも両 DB の取得と実行記録の保存は行います。Raw の内容が変わっていれば
+最新ファイルを置換しますが、実行ごとのアーカイブは増やしません。
+removed は最新一覧と固定パスの両方から削除するパーティション数です。
+置換・削除するのは管理対象データのみです。入力 DB は保持し、置換した旧 Raw は成功確定後に削除します。
 
-## Configuration details
+## 設定の詳細
 
-Each YAML file declares `schema_version: "2.3.0"`. Versions 2.0.x through 2.3.x are accepted;
-unsupported major/minor versions, duplicate/unknown keys and incorrect types are errors.
-Each layer is validated before merging, so a higher layer cannot hide an invalid lower layer.
-Published state and run records use schema 3.0.0 and the latest Raw layout.
-Other stored-data formats are rejected; the CLI does not convert them automatically.
+各 YAML は `schema_version: "2.3.0"` を持ちます。2.0.x〜2.3.xに対応し、
+未対応の major/minor、キーの重複・未知キー、型の不一致はエラーにします。
+各設定元をマージ前に検証するため、上位設定で下位設定の誤りを隠すことはできません。
+state・実行記録はスキーマ 3.0.0 と最新 Raw 配置を使用します。
+それ以外の保存形式はエラーとし、自動変換しません。
 
-Precedence is built-in defaults → user config → current directory's `.tkn/config.yaml`
-→ `--config` → CLI profile selection. Profiles merge by name and then by property.
-`config show` includes source versions, the effective schema version, resolved paths and
-the source that supplied each value. No configuration file is written while reading it.
+優先順位は built-in → ユーザー設定 → 実行時の `.tkn/config.yaml`
+→ `--config` → CLI でのプロファイル選択です。
+profiles は名前、次にプロパティ単位でマージします。
+`config show` には各入力の schema version、内部 schema version、解決後のパス、
+値ごとの設定元を表示します。読み込みで設定を書き換えません。
 
-Without `--config`, both the user config at `~/.tkn/manictime_data_pipeline/config.yaml`
-and the current directory's `.tkn/config.yaml` are discovered automatically; missing optional
-files are skipped. This merges settings, rather than selecting only the first existing file.
-An explicitly supplied `--config` path must exist; a missing file is an error.
-`--profile` selects a profile name within the merged settings, not a config file or folder.
-When omitted, `default_profile` must match a key in `profiles`. For example, after renaming
-`profiles.current-pc` to `profiles.desktop`, also set `default_profile: desktop`.
-The CLI does not guess another profile when the selected name is missing. The error lists
-the selected name, its source, available profiles and loaded config paths. Different profile
-names remain separate after merging, even if their `device_id` values match; the duplicate
-device error identifies the conflicting profiles and their config paths.
+`--config` を省略しても、`~/.tkn/manictime_data_pipeline/config.yaml` と実行時の
+`.tkn/config.yaml` を自動で確認し、存在するファイルを読み込みます。
+最初に見つかった1ファイルだけを使うのではなく、設定を統合します。
+明示した `--config` のファイルが存在しない場合はエラーです。
+`--profile` は統合後の設定にあるプロファイル名を選ぶ引数で、ファイルやフォルダの指定ではありません。
+省略時は `default_profile` が `profiles` のキー名と一致する必要があります。
+例えば `profiles.current-pc` を `profiles.desktop` に変更したら、`default_profile: desktop`
+も合わせて変更します。不明な名前から別のプロファイルを推測して実行することはありません。
+選択エラーでは指定名・その設定元・選択可能な名前・読み込んだ設定ファイルを表示します。
+統合時にプロファイル名が異なるものは別々に残り、`device_id` が同じなら重複エラーになります。
+重複エラーには対象のプロファイル名と設定ファイルを表示します。
 
 
-| Key | Meaning |
+| キー | 意味 |
 | --- | --- |
-| `default_profile` | Profile used unless `--profile` is supplied |
-| `raw_path` | Parent folder for DB copies; default `~/.tkn/manictime_data_pipeline/data/raw` |
-| `processed_data_path` | Parent folder for extracted CSV data; default `~/.tkn/manictime_data_pipeline/data/csv` |
-| `state_path` | Durable checkpoint, provenance, run records and recovery data; default `~/.tkn/manictime_data_pipeline/state` |
-| `backup_timeout_seconds` | Per-DB backup timeout; default 300, integer 1–86400 |
-| `max_activity_drop_percent` | Maximum allowed activity row reduction; default 10, number 0–100; see below |
-| `profiles.<name>.device_id` | Required name used for the data subfolder; unique across profiles and valid on Windows |
-| `profiles.<name>.source_path` | Required ManicTime application folder or DB folder |
-| `profiles.<name>.raw_path` | Optional override of the common DB-copy parent folder |
-| `profiles.<name>.processed_data_path` | Optional override of the common CSV parent folder |
+| `default_profile` | `--profile` 省略時の対象 |
+| `raw_path` | DB コピーの保存先の親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/raw` |
+| `processed_data_path` | CSV データ出力先の親フォルダ。既定値は `~/.tkn/manictime_data_pipeline/data/csv` |
+| `state_path` | チェックポイント・来歴・実行記録・復旧用データの保存先。既定値は `~/.tkn/manictime_data_pipeline/state` |
+| `backup_timeout_seconds` | DB ごとの backup の制限秒数。既定 300、整数 1～86400 |
+| `max_activity_drop_percent` | 許容する活動行数の減少率。既定 10、数値 0～100。後述の停止条件を参照 |
+| `profiles.<name>.device_id` | 必須。データ保存先のサブフォルダ名。他のプロファイルと重複せず、Windows で使用できる名前 |
+| `profiles.<name>.source_path` | 必須。ManicTime 本体のフォルダまたは DB 格納フォルダ |
+| `profiles.<name>.raw_path` | 任意。共通の DB 保存先の親フォルダを上書き |
+| `profiles.<name>.processed_data_path` | 任意。共通の CSV 保存先の親フォルダを上書き |
 
-For each output path, a profile override takes precedence over the common setting; otherwise
-the common value is used. This also applies when a lower-priority file sets a profile override
-and a higher-priority file changes the common value. Set that profile's value in the higher
-file to override it. Omitted common values use the built-in defaults.
-`config show` includes `effective_profiles`, showing the inherited/overridden parent folders,
-actual per-device output folders and the source that supplied each parent value.
+保存先ごとに、プロファイルの指定があればその値、なければ共通設定を使います。
+下位の設定ファイルでプロファイル別に指定した値は、上位ファイルの共通設定より優先します。
+変更する場合は上位ファイルでもそのプロファイルの値を指定します。
+共通設定も省略した場合は、組み込みの既定値を使います。
+`config show` の `effective_profiles` には、継承・上書き後の親フォルダ、実際のデバイス別保存先、
+それぞれの親フォルダを決めた設定元を表示します。
 
-For example, a historical profile can use separate parents while other profiles use the defaults:
+例えば、過去 PC だけ別の保存先を指定し、他のプロファイルには既定値を使用できます。
 
 ```yaml
 schema_version: "2.0.0"
@@ -217,84 +235,80 @@ profiles:
     processed_data_path: C:/path/to/csv
 ```
 
-The paths above produce `C:/path/to/archive/Example Historical PC/*.db` and
-`C:/path/to/csv/Example Historical PC/`. There is no additional `Raw` folder.
-Changing `device_id` changes the output folder; do not rename it to relabel existing data.
+この例の保存先は `C:/path/to/archive/Example Historical PC/*.db` と
+`C:/path/to/csv/Example Historical PC/` です。追加の `Raw` フォルダは作りません。
+`device_id` を変更すると保存先も変わるため、既存データの表示名変更には使用しないでください。
 
-`~` expands to the current user's home. Relative paths in every layer resolve from
-the execution working directory, not the YAML file's directory. An installed CLI does not
-implicitly read the checkout's configuration unless it runs from that checkout or
-`--config` names it. Real settings, DBs and runtime results must stay outside Git.
+`~` は実行ユーザーのホームに展開します。
+相対パスは、どの設定元でも YAML の場所ではなく実行時のカレントディレクトリを基準にします。
+インストール済み CLI がリポジトリ内の設定を読むのは、そこで実行した場合か、
+`--config` で指定した場合です。実設定、DB、実行結果は Git 管理外に置きます。
 
-Add a separate named profile with a distinct `device_id` for a historical DB.
-Choose a Raw destination separate from the archived input directory.
-Only one selected profile runs per invocation; other sources are not automatically ingested.
-A published dataset is bound to its resolved source path, Raw root and device ID.
-The CSV root and profile name are also bound to state. Changing these bindings is rejected.
-Moving existing data or renaming a profile requires a separate, verified procedure.
+過去 PCの DB には、別名のプロファイルと異なる `device_id` を追加できます。
+元のアーカイブを入力にする場合も、Raw 出力は別フォルダに指定してください。
+1回の実行では選択した1プロファイルだけを処理し、他の入力を自動取得しません。
+公開済みデータセットは、解決後の入力パス・Raw ルート・device ID と結び付きます。
+CSV 保存先とプロファイル名も state と結び付きます。これらの変更は拒否します。
+既存データの移動やプロファイル名の変更には、別途、検証を伴う手順が必要です。
 
-### Task Scheduler
+### Windows Task Scheduler
 
-Configure a daily or weekly task to run the installed executable. Use its absolute path
-from `Get-Command tkn-manictime-pipeline` and these arguments:
+日次・週次のタスクでインストール済み実行ファイルを呼び出します。
+`Get-Command tkn-manictime-pipeline` で取得した絶対パスをプログラムに指定し、
+次を引数にします。
 
 ```console
 --config "C:\path\to\config.yaml" --profile current-pc ingest
 ```
 
-Use absolute data paths in scheduled settings. The task runs as the account whose home
-contains the selected configuration/state. Set Task Scheduler to avoid overlapping runs;
-the CLI also holds OS locks in state, keyed by the resolved Raw and CSV roots. All writers
-sharing data roots must use the same `state_path` and Windows account. No browser opens.
-This repository does not automatically register, replace or disable scheduled tasks.
+定期実行用設定のデータパスには絶対パスを推奨します。
+実行アカウントのホームが設定・state の基準になります。
+Task Scheduler は重複起動しない設定にします。CLI は解決後の Raw・CSV 保存先ごとのロックを state に置きます。
+同じデータ保存先へ書き込む実行では、同じ `state_path` と Windows アカウントを使用してください。
+ブラウザは起動しません。このリポジトリはスケジュールを自動登録・置換・無効化しません。
 
-## Storage, extraction and recovery contract
+## 保存・抽出・復旧の仕様
 
-### Raw capture
+### Raw 保存
 
-Both databases are saved with Python's [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup).
-This uses SQLite's [online backup mechanism](https://www.sqlite.org/backup.html), rather
-than a filesystem copy of a file being changed. Committed WAL contents are included;
-uncommitted work and unsaved application buffers are not.
+Python の [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup)
+を使用します。[SQLite online backup](https://www.sqlite.org/backup.html) により、
+更新中の DB ファイルを単純コピーする代わりに、整合したスナップショットを取得します。
+コミット済み WAL は含み、未コミットのデータやアプリ内の未保存バッファは含みません。
 
-Each DB is independently consistent. The Core and Reports backups are sequential,
-**not one application-wide transaction**. Reports may lag Core. The capture is data
-evidence, not a complete backup of ManicTime executables, settings, plugins or screenshots.
+**DB ごとに整合しますが、Core と Reports の2つを同時点に固定する処理ではありません。**
+順番に取得し、Reports は Core より遅れている場合があります。
+これはデータの証跡であり、実行ファイル・設定・プラグイン・スクリーンショットも含む
+ManicTime 一式のバックアップではありません。
 
-Each state run record includes capture start/end UTC times, source paths, file sizes, SHA-256, tool
-version, SQLite journal mode and capture method. DB integrity is checked with
-`PRAGMA quick_check`. Source databases are opened read-only and are never pruned,
-vacuumed, overwritten or deleted. Current Raw copies are replaced only after validation.
-All tables, including internal and aggregate tables, remain in Raw.
+state の実行記録に、取得開始・完了 UTC 時刻、入力パス、ファイルサイズ、SHA-256、ツール版、
+SQLite journal mode、取得方法を記録し、`PRAGMA quick_check` で DB の整合性を確認します。
+入力は読み取り専用で開き、削除・上書き・vacuum・取得済み行の間引きを行いません。
+保存先の最新 Raw は検証後に置換します。集計・内部テーブルを含む全テーブルが Raw に残ります。
 
-Raw keeps **one generation normally and old + new during an ordinary update**.
-For example, two databases totalling 754 MB need about 754 MB in steady state, and roughly
-1.5 GB during replacement when their sizes are similar, plus temporary CSV space.
-Storage follows DB growth rather than the number of runs. The previous DBs are moved
-aside on the same filesystem, not copied into a third generation in state.
+Raw は **通常時に1世代、通常の更新中には新旧2世代**を保持します。
+例えば両 DB の合計が754 MBなら、通常時は約754 MB、新旧が同程度のサイズなら更新中は約1.5 GBです。
+別途、CSV の更新用一時領域が必要です。容量は DB 自体の成長に従い、実行回数に比例して増えません。
+旧 DB は同じファイルシステム上で一時退避し、state に3世代目のコピーを作りません。
 
-Candidates from failed or rejected updates are discarded after successful rollback;
-the failure details and capture metadata remain in state. If recovery/cleanup cannot
-finish, staging is retained and the next update must recover before capturing again.
+失敗・停止した更新候補は、復旧成功後に削除します。失敗理由・取得来歴は state に残します。
+復旧・整理に失敗した場合は作業用データを残し、次の取得より先に復旧を必要とします。
 
-### Activity reduction safeguard
+### 活動件数の減少による停止
 
-Before replacing Raw or CSV, ingest compares `Ar_Activity` row counts with the previous
-successful snapshot, both overall and for each existing `ReportId` timeline. By default,
-a reduction **greater than 10%** in any comparison stops publication. A disappeared
-nonempty timeline counts as a 100% reduction, even if other timelines have grown.
-Normal updates and `ingest --dry-run` use the same check. A rejected dry-run returns
-an error without writing; a rejected normal run preserves previous data, discards the
-candidate after recovery and records the counts/reason in state.
+Raw・CSV を置換する前に、直前の成功時と `Ar_Activity` の行数を比較します。
+活動全体と、既存の `ReportId` ごとのタイムラインについて、既定では **10％を超えて減った場合**に停止します。
+空でなかったタイムラインの消失は100％減として扱い、他のタイムラインが増えていても検出します。
+通常実行と `ingest --dry-run` は同じ検査を行います。停止する dry-run は書き込まずエラーを返します。
+停止する通常実行は前回データを保持し、復旧後に候補を削除して、件数・理由を state に記録します。
 
-`max_activity_drop_percent` is a common setting (not a per-profile setting). `0` disallows
-any decrease; `100` allows any decrease, including an empty history. Exactly the configured
-limit is allowed. It is a row-count safeguard, not proof that the new DB contains every
-previous record: small losses, same-count substitutions or gradual losses can pass.
-It does not classify edits/deletions as errors by themselves.
+`max_activity_drop_percent` は共通設定です。プロファイル内の設定ではありません。
+`0` はすべての件数減少を停止し、`100` は全件消失を含むすべての減少を許容します。
+しきい値と同率の減少は許容します。これは件数の検査であり、過去の全行の包含を証明するものではありません。
+少量の欠落、同件数での入れ替わり、徐々に進む欠落などは通過し得ます。修正・削除自体をエラーにはしません。
 
-If a reduction is intentional, inspect the source and retain an independent backup as
-needed. Use a temporary explicit configuration override for the selected invocation:
+意図した減少なら入力を確認し、必要に応じて独立したバックアップを保持したうえで、
+その実行だけに明示的な追加設定を指定できます。
 
 ```yaml
 schema_version: "2.1.0"
@@ -306,90 +320,87 @@ tkn-manictime-pipeline --config "C:\path\to\approved-reduction.yaml" ingest --dr
 tkn-manictime-pipeline --config "C:\path\to\approved-reduction.yaml" ingest
 ```
 
-Keep your existing profile/output settings loaded from the normal configuration. The next
-invocation without that override uses the normal limit again. There is no implicit retry
-with a relaxed threshold and no force-overwrite switch for edited/unmanaged files.
+通常の設定からプロファイル・保存先の設定を読み込める状態で使います。
+この追加設定を付けない次回実行では通常のしきい値に戻ります。
+自動で条件を緩めて再試行する処理や、手編集・未管理ファイルを強制上書きするオプションはありません。
 
-### What is extracted
+### 抽出対象と解釈
 
-The exporter preserves original table/column names and all columns, including icons,
-source IDs, change sequences and opaque metadata. The manifest records SQL definitions,
-column types and primary keys. Non-aggregate `Ar_*` tables from Reports are exported.
-Tables ending in `ByHour`, `ByDay` or `ByYear`, and `Ar_TimelineSummary`,
-are retained in Raw but excluded from CSV. Non-`Ar_*` internal tables are Raw-only.
+テーブル名・列名は原名を使い、アイコン、source ID、変更 sequence、内部 metadata を含む全列を保存します。
+manifest に SQL 定義・列型・主キーを記録します。
+Reports DB の非集計 `Ar_*` テーブルを対象とし、末尾が `ByHour`・`ByDay`・`ByYear`
+のテーブルと `Ar_TimelineSummary` は Raw のみに保存します。
+`Ar_*` 以外の内部テーブルも Raw のみです。
 
-Minimum supported tables/keys are:
+最低限、次のテーブルと主キーを必要とします。
 
-| Table              | Primary key              | Relation/use                               |
-| ------------------ | ------------------------ | ------------------------------------------ |
-| `Ar_Activity`    | `ReportId, ActivityId` | Activity intervals and source text         |
-| `Ar_Timeline`    | `ReportId`             | Interpret each timeline through its schema |
-| `Ar_Group`       | `ReportId, GroupId`    | Join from activity using both columns      |
-| `Ar_CommonGroup` | `CommonId`             | Common group definitions                   |
+| テーブル           | 主キー                   | 関係・用途                     |
+| ------------------ | ------------------------ | ------------------------------ |
+| `Ar_Activity`    | `ReportId, ActivityId` | 活動区間と元の文字列           |
+| `Ar_Timeline`    | `ReportId`             | 各タイムラインを schema で解釈 |
+| `Ar_Group`       | `ReportId, GroupId`    | 活動から両列を使って結合       |
+| `Ar_CommonGroup` | `CommonId`             | 共通グループの定義             |
 
-`GroupId` may be null for tag/group-list activities. Preserve `Ar_GroupList` and
-`Ar_GroupListItem` for those relationships. Timeline report IDs must not be assumed
-to be identical across installations. Time on different timelines can overlap; do not
-sum all activity durations as total PC usage.
+タグ・グループリストの活動では `GroupId` が null の場合があります。
+`Ar_GroupList` と `Ar_GroupListItem` も保存して関係を維持します。
+タイムラインの ReportId は環境をまたいで固定値と仮定しないでください。
+異なるタイムラインの活動時間は重なるため、単純合計は PC 利用時間になりません。
 
-Activity partitions use the year/month of the source `StartLocalTime`.
-An interval crossing midnight/month-end is not split. Months with no rows have no activity CSV;
-empty metadata tables have a header-only CSV. Source `*UtcTime` columns represent UTC and
-`*LocalTime` columns represent recorded local wall time. Their original strings are kept,
-without inventing an IANA timezone or adding an inferred offset.
-Manifest timestamps are offset-qualified ISO 8601 UTC.
+活動は `StartLocalTime` の年月で分割します。
+日付・月をまたぐ区間も分割しません。行のない月には活動 CSV を作らず、
+空の関連テーブルにはヘッダーのみの CSV を作ります。
+`*UtcTime` は UTC、`*LocalTime` は記録された現地時刻として、元の文字列を保持します。
+推測した timezone や offset を加えません。
+manifest の時刻は offset 付き ISO 8601 UTC です。
 
-CSV uses UTF-8 without BOM, comma separators, LF, headers and CSV quoting for commas/quotes/newlines.
-Numbers use their source representation. SQL null is `\N`; BLOB is `\B` followed by
-base64; a text value beginning with backslash receives one extra leading backslash.
-LF terminates CSV records; CR, LF and CRLF inside source values are preserved and quoted.
-Empty string, null, bytes and literal marker text therefore remain distinct.
-`manictime_pipeline.export.decode_cell` decodes these markers.
-Import CSV columns as data/text in spreadsheets: source titles are preserved literally,
-including strings that a spreadsheet could otherwise interpret as formulas.
+CSV は BOM なし UTF-8、カンマ区切り、LF、ヘッダー付きで、カンマ・引用符・改行を CSV の引用規則で保存します。
+数値は入力の表現を使用します。SQL null は `\N`、BLOB は `\B` の後に base64、
+先頭がバックスラッシュの文字列は先頭にバックスラッシュを1つ追加します。
+空文字・null・バイナリ・マーカーと同じ文字列を区別できます。
+LF は CSV レコードの区切りです。元の値の中にある CR・LF・CRLF は、引用したうえで保持します。
+`manictime_pipeline.export.decode_cell` でマーカーを復号できます。
+タイトルは原文を保持するため、表計算ソフトではデータ・文字列として取り込んでください。
+数式と解釈され得る文字列もそのまま残っています。
 
-### Incremental behavior and identity
+### 差分更新と識別子
 
-A run scans every exported source row in primary-key order, computing a SHA-256 fingerprint
-for each month/table partition. It also checks prior published CSV hashes before updating.
-This deliberately avoids an ID/sequence-only watermark: a past edit, deleted row, late
-arrival, modified icon or activity moved to another month must be detected.
+対象全行を主キー順に読み、月・テーブルごとの SHA-256 を計算します。
+更新前に、前回公開した CSV のハッシュも検証します。
+ID や変更 sequence の最大値だけに頼らず、
+古い行の修正・削除、遅れて追加された行、アイコンの変更、別月への活動移動も検出します。
 
-Only changed partitions are written. An updated month replaces the same CSV path with
-all rows for that month. Unchanged CSVs retain their paths and modification times. A second streaming pass reads changed tables
-to write selected partitions; memory does not grow with the number of activity rows.
-This is incremental **output**, with full-source comparison cost on each run.
+書き込むのは変更のあったパーティションだけです。
+更新された月は同じ CSV パスをその月の全行で置換します。未変更の CSV はパス・更新日時を保持します。
+変更されたテーブルは2回目の読み込みで対象パーティションを出力します。
+活動件数に比例して全行をメモリに保持する方式ではありません。
+**出力は差分更新ですが、比較のための全件読み取りは毎回行います。**
 
-The complete run record referenced by state/current.json is the checkpoint.
-A generated dataset UUID is preserved across
-runs; record identity is dataset UUID + table + source primary key.
-Source schema changes trigger new versions of affected partitions. Missing required
-tables/keys, unkeyed export tables and invalid activity dates stop publication.
+state/current.json が参照する完全な実行記録がチェックポイントです。dataset UUID を次回以降も維持し、
+dataset UUID + テーブル名 + 入力の主キーでレコードを識別します。
+schema の変更では該当テーブルの出力を新版にします。
+必須テーブル・主キーの欠落、主キーのない抽出テーブル、不正な活動日時では公開を中止します。
 
-`verify` checks pointer/manifest hashes, all currently referenced CSV hashes, headers,
-column/row counts, both current Raw DB hashes and integrity, and freshly recomputed
-partition fingerprints against that Raw Reports snapshot. It does not compare against
-the continually changing live DB or audit every unreferenced historical run.
+`verify` は pointer/manifest のハッシュ、現在参照する全 CSV のハッシュ・ヘッダー・列数・行数、
+最新 Raw の両 DB のハッシュと整合性、Raw Reports から再計算したパーティションの一致を確認します。
+更新され続ける稼働 DB や、現在参照していない過去 run すべてを監査するコマンドではありません。
 
-### Failure and retry
+### 失敗時と再実行
 
-Candidate DBs are captured and checked in `<raw_path>/<device_id>/.<run-id>.partial/new/`.
-Completed snapshots are read without creating SQLite WAL/shared-memory files; live source
-reads retain normal SQLite locking and include committed WAL data. Unexpected SQLite
-sidecar files beside saved Raw stop validation instead of being ignored or deleted.
-All changed CSVs are generated/checked in `state/<profile>/transactions/<run-id>/new/`.
-CSV rollback copies go to the transaction's `old/` folder. All provenance and the recovery
-journal stay in state; no JSON metadata is written under Raw or CSV.
+候補 DB は `<raw_path>/<device_id>/.<run-id>.partial/new/` に取得して検証します。
+取得済みの DB は SQLite の WAL・共有メモリファイルを新規作成せずに読みます。
+稼働中の入力には通常の SQLite ロックを使い、コミット済み WAL の内容も取得します。
+保存済み Raw の横に想定外の SQLite 補助ファイルがあれば、無視・削除せず検証を停止します。
+変更 CSV は `state/<profile>/transactions/<run-id>/new/` に生成・検証し、旧 CSV のコピーは同じ実行の `old/` に置きます。
+来歴と復旧手順は state に保存し、Raw・CSV 保存先に JSON は置きません。
 
-After preparation, the old current DBs are moved to the Raw staging `old/` directory and
-candidate DBs move into their fixed paths. CSV replacements use same-directory temporary
-files, including when CSV and state reside on different drives. Both Raw and CSV are
-verified before writing the run record and committing state `current.json`. Old DBs,
-CSV rollback copies and staging are removed only after the commit.
+準備後、旧 DB を Raw 作業用フォルダの `old/` へ退避し、候補 DB を固定パスへ移動します。
+CSV は保存先と同じフォルダの一時ファイルを経由して置換し、state と CSV が別ドライブでも対応します。
+Raw・CSV の両方を検証してから実行記録を保存し、state の `current.json` を確定します。
+旧 DB、復旧用 CSV、作業用データは成功確定後に削除します。
 
-An ordinary failure attempts rollback to the previous Raw and CSV contents. If rollback is blocked
-(for example, a file remains open or has been manually edited), staging and the journal
-remain in state. A terminated process also leaves its journal. Run:
+通常のエラーでは前回の Raw・CSV へ戻します。ファイルが開かれている、手編集されているなどの理由で
+戻せない場合は、復旧用データと手順を state に残します。プロセスの強制停止でも手順が残ります。
+次のコマンドで復旧します。
 
 ```console
 tkn-manictime-pipeline recover --dry-run
@@ -397,37 +408,36 @@ tkn-manictime-pipeline recover
 tkn-manictime-pipeline verify
 ```
 
-`recover --dry-run` lists pending runs without changing files. `recover` rolls back
-uncommitted updates; if the checkpoint was already committed, it only clears staging.
-It checks hashes and refuses to overwrite unrelated manual edits. The next ordinary
-`ingest` also recovers pending transactions before starting a new run. Read-only ingest
-and verify stop if a transaction is pending. Automatic recovery does not resume extraction.
+`recover --dry-run` は保留中の実行を一覧し、書き込みません。
+`recover` は未確定の変更を元に戻し、チェックポイントが確定済みなら一時データだけを整理します。
+ハッシュを検査し、無関係な手編集を上書きしません。通常の `ingest` も次の実行を始める前に復旧します。
+読み取り専用の ingest と verify は、復旧が保留中なら停止します。抽出処理の途中再開は行いません。
 
-State writes are required for publication. A failure to create the initial run record stops
-before Raw or CSV writes. Completed run records referenced by the checkpoint are immutable;
-records from interrupted/uncommitted attempts can be marked failed during recovery.
-The authoritative commit marker is `current.json`, not a run file's status alone.
-Failed candidates are cleaned after rollback; the previous successful Raw stays available.
-Historical run records remain in state. Configuration/preflight errors are reported on stderr.
+state への書き込みは公開の必須条件です。最初の実行記録を書けなければ Raw・CSV の保存前に停止します。
+チェックポイントが参照する確定済み実行記録は変更しません。
+未確定・中断した実行の記録は復旧時に failed とする場合があります。
+成功確定の基準は実行記録内の status 単独ではなく `current.json` です。
+失敗した候補は復旧後に整理し、直前に成功した Raw を保持します。過去の実行記録は state に残します。
+設定・事前検証のエラーは標準エラーに表示します。
 
-OS locks are released on process exit; the small state lock files remain. Filesystem sync
-software, manual edits and arbitrary CSV readers do not participate in those locks.
-Fixed paths do not provide a transaction spanning multiple files. Do not use Raw or CSV
-after a failed/interrupted update until recovery completes. Filesystem or storage failures
-that prevent rollback require restoring the affected files/state from backups.
+プロセス終了時には OS がロックを解放し、state 内の小さいロックファイルは残ります。
+同期ソフト、手編集、任意の CSV 読み込み側はこのロックに参加しません。
+固定パスの複数ファイルを一括で切り替える保証はありません。
+失敗・中断後は復旧が完了するまで Raw・CSV を利用しないでください。
+ストレージ障害などで復旧できない場合は、影響を受けたファイル・state をバックアップから戻す必要があります。
 
-Manually edited/missing tracked CSVs and any untracked CSVs in the device CSV
-folder stop ingest and verify. Preserve untracked data elsewhere or restore tracked data;
-there is no force-overwrite option. Source DBs are always read-only.
+管理対象 CSV の手編集・欠損、デバイス別 CSV フォルダ内にあるすべての未管理 CSV は ingest と verify を停止させます。
+未管理データは別の場所に保全し、管理対象の破損は元に戻してください。強制上書きオプションはありません。
+入力 DB は常に読み取り専用です。
 
-Dry-run reads the live Reports DB in one transaction, which can briefly delay writers
-on rollback-journal databases. It skips backup and integrity checking, so it cannot prove
-destination permissions, free space or successful backup. SQLite itself manages its
-normal locking/shared-memory facilities; the pipeline issues no source write statements.
+dry-run は稼働中 Reports DB を1つの読み取りトランザクションで読みます。
+rollback journal 方式では、この間アプリ側の書き込みが短時間待つ可能性があります。
+backup と整合性検査は省くため、出力先の権限・空き容量・backup の成功までは保証しません。
+SQLite 自身は通常のロック・共有メモリ管理を行いますが、CLI は入力への書き込み SQL を実行しません。
 
-## Maintenance and development
+## 保守・開発・検証
 
-After changing source, packaged resources or dependencies:
+コード、同梱リソース、依存関係の更新後は再インストールします。
 
 ```console
 cd "C:\path\to\tkn_manictime_data_pipeline"
@@ -435,7 +445,7 @@ uv tool install . --reinstall
 tkn-manictime-pipeline --version
 ```
 
-For development:
+開発時は次を使います。
 
 ```console
 cd "C:\path\to\tkn_manictime_data_pipeline"
@@ -446,18 +456,17 @@ uv run --frozen ruff format --check .
 uv build
 ```
 
-Tests use synthetic SQLite files and include WAL capture, source preservation, historical
-edits/deletions, idempotency, schema changes, output corruption, process death between Raw moves, during CSV replacement and after commit, rollback,
-Raw retention bounds, activity reduction safeguards,
-unmanaged-file collisions, state failures, locks, configuration layering, Unicode/BLOB/NULL
-CSV and stderr/JSON behavior.
-Runtime modules are split into CLI/configuration, SQLite access, streaming CSV, pipeline
-publication and file/logging helpers. No live/private datasets are included in tests.
-See the synthetic [ingest run manifest](docs/manifest.example.json) and
-[checkpoint pointer](docs/current.example.json) examples. They document persisted formats and
-are not runtime resources; [details](docs/reports.md#why-json-examples-are-in-docs).
+テストは架空の SQLite DB で、WAL 保存、元 DB の保全、過去行の変更・削除、冪等性、
+schema 変更、出力破損、Raw 移動間・CSV 差し替え中・確定後のプロセス強制終了、復旧、
+Raw 保持容量、活動件数減少の停止、未管理ファイルとの衝突、
+state の書き込み失敗、ロック、設定階層の厳密な検証、
+日本語・BLOB・NULL の CSV、標準エラーと JSON の分離を確認します。
+CLI・設定、SQLite アクセス、CSV の逐次処理、パイプラインの公開、ファイル・ログ処理に責務を分離しています。
+実データや個人情報をテストには含めません。
+[ingest実行記録の例](docs/manifest.example.json)と[確定ポインターの例](docs/current.example.json)は、
+保存形式を理解するための見本です。コードは読み込みません。[配置の説明](docs/reports_ja.md#docsのjson例について)。
 
-The design follows the existing Itadaki pipeline's src layout, uv packaging, YAML profiles,
-application-owned state and default-write/dry-run command contract. ManicTime's continuously
-updated DB requires snapshot acquisition and revision-aware partitions, so Itadaki's
-processed-source deletion behavior is intentionally not carried over.
+既存 Itadaki パイプラインの src layout、uv 配布、YAML プロファイル、
+アプリ所有の state、通常実行で書き込む／dry-run で確認する契約を参考にしています。
+ManicTime は1つの DB を更新し続けるため、スナップショット保存と過去修正を検出する
+パーティション更新を採用し、Itadaki の取得済み入力を削除する処理は引き継いでいません。
