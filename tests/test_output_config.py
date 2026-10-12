@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from manictime_pipeline.config import config_show, load_config, selected_profile
+from manictime_pipeline.config import config_list, load_config, selected_profile
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def test_minimal_profile_uses_default_parent_paths(config_paths):
     assert profile.raw_path == root / "app/data/raw"
     assert profile.raw_directory == root / "app/data/raw/Example Current PC"
     assert profile.processed_path == root / "app/data/csv/Example Current PC"
-    shown = config_show(config)["effective_profiles"]["pc"]
+    shown = config_list(config)["effective_profiles"]["pc"]
     assert shown["winning_sources"] == {
         "raw_path": "built-in",
         "processed_data_path": "built-in",
@@ -69,7 +69,7 @@ def test_common_and_profile_values_have_identical_parent_semantics(config_paths)
     assert common.processed_path == root / "common-csv/A"
     assert overridden.raw_directory == root / "private-raw/B"
     assert overridden.processed_path == root / "private-csv/B"
-    shown = config_show(config)
+    shown = config_list(config)
     assert shown["effective_profiles"]["b"]["raw_path"] == str(root / "private-raw")
     assert shown["effective_profiles"]["b"]["csv_directory"] == str(overridden.processed_path)
 
@@ -92,7 +92,7 @@ def test_profile_override_survives_higher_layer_common_default(config_paths):
     resolved = selected_profile(config)
     assert resolved.raw_directory == root / "override-raw/PC"
     assert resolved.processed_path == root / "common-csv/PC"
-    winners = config_show(config)["effective_profiles"]["pc"]["winning_sources"]
+    winners = config_list(config)["effective_profiles"]["pc"]["winning_sources"]
     assert winners["raw_path"] == str(lower)
     assert winners["processed_data_path"] == str(higher)
 

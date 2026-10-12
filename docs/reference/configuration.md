@@ -15,8 +15,17 @@ Other stored-data formats are rejected; the CLI does not convert them automatica
 
 Precedence is built-in defaults → user config → current directory's `.tkn/config.yaml`
 → `--config` → CLI profile selection. Profiles merge by name and then by property.
-`config show` includes source versions, the effective schema version, resolved paths and
-the source that supplied each value. No configuration file is written while reading it.
+`config list` includes source versions, the effective schema version (`schema_version`),
+resolved paths, the source that supplied each value and `selected_profile` (or `null` when unset).
+No migration occurs during reading; `migration_applied` is `false`.
+Listing does not create or update configuration, state, cache or reports.
+
+The default stdout contains one `key=value` entry per line, like `git config --list`.
+Nested mappings use dots and list entries use indexes such as `[0]`. Empty lists/maps are
+`[]`/`{}`, booleans are `true`/`false`, and unset values are `null`. Strings have no JSON quotes;
+Windows paths retain single backslashes, while control characters are escaped.
+Use `tkn-manictime-pipeline config list --json` for structured JSON with the same information.
+Both formats send the INFO listing message to stderr; `--quiet` suppresses that message.
 
 Without `--config`, both the user config at `~/.tkn/manictime_data_pipeline/config.yaml`
 and the current directory's `.tkn/config.yaml` are discovered automatically; missing optional
@@ -50,7 +59,7 @@ For each output path, a profile override takes precedence over the common settin
 the common value is used. This also applies when a lower-priority file sets a profile override
 and a higher-priority file changes the common value. Set that profile's value in the higher
 file to override it. Omitted common values use the built-in defaults.
-`config show` includes `effective_profiles`, showing the inherited/overridden parent folders,
+`config list` includes `effective_profiles`, showing the inherited/overridden parent folders,
 actual per-device output folders and the source that supplied each parent value.
 
 ## Paths and historical profiles

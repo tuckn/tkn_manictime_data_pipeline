@@ -77,7 +77,7 @@ ManicTime 本体のフォルダを指定した場合は本体フォルダ、DB �
 [同梱の設定例](src/manictime_pipeline/resources/config.example.yaml)に初期設定全体があります。
 
 ```console
-tkn-manictime-pipeline config show
+tkn-manictime-pipeline config list
 tkn-manictime-pipeline ingest --dry-run
 tkn-manictime-pipeline ingest
 tkn-manictime-pipeline verify
@@ -89,7 +89,8 @@ tkn-manictime-pipeline verify
 
 ### 結果を確認・利用する
 
-実行結果の絶対パスは標準出力の JSON に、進捗は標準エラーに表示されます。
+処理結果の絶対パスは標準出力の JSON に、進捗は標準エラーに表示されます。
+`config list` は設定を `key=value` で表示し、`--json` 指定時に JSON を出します。
 
 | 保存先 | 役割 |
 | --- | --- |
@@ -151,7 +152,7 @@ SHA-256の値です」。最新と直前のPC別世代を保持し、旧PCは日
 | 目的                                       | コマンド                    |
 | ------------------------------------------ | --------------------------- |
 | 編集済み内容を上書きせずユーザー設定を作成 | `config init [--dry-run]` |
-| 解決後の値と、その値を決めた設定元を確認   | `config show`             |
+| 解決後の値と、その値を決めた設定元を確認   | `config list [--json]`     |
 | 入力 schema・件数・活動期間を確認          | `inspect`                 |
 | Raw 保存と CSV 差分更新                    | `ingest [--dry-run]`      |
 | 最新 CSV と対応する Raw を検証             | `verify`                  |
@@ -166,7 +167,12 @@ SHA-256の値です」。最新と直前のPC別世代を保持し、旧PCは日
 同じテンプレートがあれば unchanged、編集済みなら保持したうえでエラーになります。
 
 終了コードは成功 0、設定・処理エラー 1、引数の使用誤り 2、中断 130 です。
-quiet でも標準出力の結果 JSON は表示されます。verbose ではエラーの traceback も表示します。
+quiet でも標準出力の結果は表示されます。verbose ではエラーの traceback も表示します。
+`config list` は既定で1行に1つの `key=value` を表示し、Windows パスの `\` を重ねずに表示します。
+入れ子は `.`、配列は `[0]` などで表し、空の配列・マッピングは `[]`・`{}`、真偽値は
+`true`・`false`、未設定値は `null` です。改行などの制御文字はエスケープします。
+JSON が必要な場合は `tkn-manictime-pipeline config list --json` を使います。
+一覧表示のログは標準エラーへ INFO で出し、設定・state・cache・report を作成・更新しません。
 対応した対話端末でのみ ANSI 色を使い、`NO_COLOR` に従います。
 
 `ingest` の created / updated / unchanged は **CSV データセット**に対する状態です。
@@ -186,8 +192,9 @@ state・実行記録はスキーマ 3.0.0 と最新 Raw 配置を使用します
 優先順位は built-in → ユーザー設定 → 実行時の `.tkn/config.yaml`
 → `--config` → CLI でのプロファイル選択です。
 profiles は名前、次にプロパティ単位でマージします。
-`config show` には各入力の schema version、内部 schema version、解決後のパス、
-値ごとの設定元を表示します。読み込みで設定を書き換えません。
+`config list` には各入力の schema version、内部 schema version（`schema_version`）、解決後のパス、
+値ごとの設定元、選択中のプロファイル（`selected_profile`）を表示します。
+読込時の migration は行わず、`migration_applied=false` と表示します。読み込みで設定を書き換えません。
 
 `--config` を省略しても、`~/.tkn/manictime_data_pipeline/config.yaml` と実行時の
 `.tkn/config.yaml` を自動で確認し、存在するファイルを読み込みます。
@@ -219,7 +226,7 @@ profiles は名前、次にプロパティ単位でマージします。
 下位の設定ファイルでプロファイル別に指定した値は、上位ファイルの共通設定より優先します。
 変更する場合は上位ファイルでもそのプロファイルの値を指定します。
 共通設定も省略した場合は、組み込みの既定値を使います。
-`config show` の `effective_profiles` には、継承・上書き後の親フォルダ、実際のデバイス別保存先、
+`config list` の `effective_profiles` には、継承・上書き後の親フォルダ、実際のデバイス別保存先、
 それぞれの親フォルダを決めた設定元を表示します。
 
 例えば、過去 PC だけ別の保存先を指定し、他のプロファイルには既定値を使用できます。

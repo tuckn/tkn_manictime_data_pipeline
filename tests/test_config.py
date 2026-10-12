@@ -3,7 +3,7 @@ import json
 import pytest
 
 from manictime_pipeline.config import (
-    config_show,
+    config_list,
     initialize_config,
     load_config,
     safe_component,
@@ -24,7 +24,7 @@ def write(path, data):
     path.write_text(json.dumps({"schema_version": "2.0.0", **data}), encoding="utf-8")
 
 
-def test_layers_merge_and_show_winning_sources(isolated):
+def test_layers_merge_and_list_winning_sources(isolated):
     cwd, home = isolated
     write(
         home / "config.yaml",
@@ -49,7 +49,7 @@ def test_layers_merge_and_show_winning_sources(isolated):
     assert config["winning_sources"]["default_profile"] == "CLI --profile"
     assert len(config["sources"]) == 3
     assert selected_profile(config).source_path == cwd / "source-b"
-    assert config_show(config)["values"]["processed_data_path"] == str(cwd / "processed")
+    assert config_list(config)["values"]["processed_data_path"] == str(cwd / "processed")
 
 
 @pytest.mark.parametrize(
@@ -117,9 +117,9 @@ def test_config_init_and_edited_protection(isolated):
     assert target.read_text() == "my edits"
 
 
-def test_config_show_no_writes(isolated):
+def test_config_list_no_writes(isolated):
     cwd, home = isolated
-    assert config_show(load_config())["sources"] == []
+    assert config_list(load_config())["sources"] == []
     assert not home.exists()
 
 
@@ -180,7 +180,7 @@ def test_cli_quiet_verbose_conflict_across_subcommands(isolated):
     from manictime_pipeline.cli import main
 
     with pytest.raises(SystemExit):
-        main(["--quiet", "config", "show", "--verbose"])
+        main(["--quiet", "config", "list", "--verbose"])
 
 
 @pytest.mark.parametrize("layer", ["home", "cwd"])
@@ -201,7 +201,7 @@ def test_cli_discovers_config_without_options(profile, isolated, capsys, layer):
     assert main(["ingest", "--dry-run"]) == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out)["profile"] == "desktop"
-    assert config_show(load_config())["sources"][0]["path"] == str(path)
+    assert config_list(load_config())["sources"][0]["path"] == str(path)
 
 
 def test_profile_selection_precedence_without_guessing(isolated):
@@ -238,7 +238,7 @@ def test_profile_error_identifies_selection_and_loaded_config(isolated, selectio
     message = str(exc.value)
     assert "Available profiles: desktop" in message
     assert str(path) in message
-    assert "config show" in message
+    assert "config list" in message
     if selection == "missing_default":
         assert "default_profile is not configured" in message
     else:

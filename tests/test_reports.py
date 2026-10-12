@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from manictime_pipeline import reports
-from manictime_pipeline.config import config_show, load_config
+from manictime_pipeline.config import config_list, load_config
 from manictime_pipeline.pipeline import ingest
 from manictime_pipeline.report_data import (
     IntervalIndex,
@@ -371,7 +371,7 @@ def test_pending_ingest_blocks_report(report_config, profile):
 def test_config_defaults_and_report_validation(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("manictime_pipeline.config.app_root", lambda: tmp_path / "app")
-    shown = config_show(load_config())
+    shown = config_list(load_config())
     assert shown["values"]["report_path"] == str(tmp_path / "app/reports")
     path = tmp_path / "settings.yaml"
     path.write_text('schema_version: "2.2.0"\nreport_lookup_gap_minutes: 0\n')

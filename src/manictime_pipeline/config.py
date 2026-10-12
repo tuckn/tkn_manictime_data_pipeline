@@ -235,7 +235,7 @@ def selected_profile(config: dict) -> Profile:
             )
         raise ValueError(
             f"{problem} Available profiles: {available}. Loaded config files: {sources}. "
-            f"{remedy} Use config show to inspect resolved settings."
+            f"{remedy} Use config list to inspect resolved settings."
         )
     p = profiles[name]
     missing = REQUIRED_PROFILE_KEYS - set(p)
@@ -259,7 +259,7 @@ def selected_profile(config: dict) -> Profile:
             "device_id must be unique across profiles (case-insensitive). Conflicts: "
             + "; ".join(conflicts)
             + ". Profiles from config files merge by profile name. "
-            "Use config show to inspect resolved settings."
+            "Use config list to inspect resolved settings."
         )
     result = Profile(
         name,
@@ -275,7 +275,7 @@ def selected_profile(config: dict) -> Profile:
     return result
 
 
-def config_show(config: dict) -> dict:
+def config_list(config: dict) -> dict:
     result = dict(config)
     values = dict(config["values"])
     for key in (
@@ -311,6 +311,8 @@ def config_show(config: dict) -> dict:
         effective[name] = entry
     result["effective_profiles"] = effective
     result["user_config_path"] = str(app_root() / "config.yaml")
+    result["selected_profile"] = values.get("default_profile")
+    result["migration_applied"] = False
     return result
 
 

@@ -6,6 +6,8 @@
 
 ## 未リリース（0.7.0 以降）
 
+- `config show` を `config list` に変更しました。既定はコピー可能な `key=value` の一覧で、Windows パスの区切りを二重にエスケープしません。JSON は `config list --json` で取得できます。
+- 設定一覧は INFO ログを標準エラーに表示し、選択中のプロファイルと migration の有無も確認できます。旧 `config show` を使う自動処理は `config list --json` に変更し、インストール済み CLI は `uv tool install . --reinstall` で更新してください。
 - README を日本語の利用入口として整理し、ManicTime の DB から CSV・HTML レポートまでのデータの流れを図示しました。
 - 設定と取り込み・復旧の詳細を `docs/reference/` に分けました。
 

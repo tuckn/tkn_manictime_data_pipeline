@@ -8,11 +8,12 @@ import logging
 import sqlite3
 import webbrowser
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from . import __version__
-from .config import config_show, initialize_config, load_config, selected_profile
+from .config import config_list, initialize_config, load_config, selected_profile
 from .database import inspect_source
 from .logging_utils import SUCCESS, configure
 from .pipeline import ingest, recover, verify
@@ -45,9 +46,14 @@ def parser() -> argparse.ArgumentParser:
         "init", parents=[common], help="Safely create user configuration"
     )
     init.add_argument("--dry-run", action="store_true", help="Preview; do not create a config file")
-    config_commands.add_parser(
-        "show", parents=[common], help="Show resolved values and winning sources"
+    listing = config_commands.add_parser(
+        "list",
+        parents=[common],
+        help="List resolved values and winning sources",
+        description="Read settings without writing files. Print one key=value per line; "
+        "nested keys use dots and list items use indexes. Windows paths are copyable.",
     )
+    listing.add_argument("--json", action="store_true", help="Print the full result as JSON")
     rules = commands.add_parser("rules", parents=[common], help="Create editable report rules")
     rules_commands = rules.add_subparsers(dest="rules_command", required=True)
     rules_init = rules_commands.add_parser(
@@ -106,6 +112,37 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+def config_lines(value: Any, prefix: str = "") -> list[str]:
+    """Flatten settings into single-line entries, preserving literal path separators."""
+    if isinstance(value, dict):
+        if not value:
+            return [f"{prefix}={{}}"]
+        return [
+            line
+            for key, item in value.items()
+            for line in config_lines(item, f"{prefix}.{key}" if prefix else key)
+        ]
+    if isinstance(value, list):
+        if not value:
+            return [f"{prefix}=[]"]
+        return [
+            line
+            for index, item in enumerate(value)
+            for line in config_lines(item, f"{prefix}[{index}]")
+        ]
+    if isinstance(value, str):
+        escapes = {"\r": "\\r", "\n": "\\n", "\t": "\\t"}
+        display = "".join(
+            escapes.get(char, f"\\u{ord(char):04x}")
+            if ord(char) < 32 or 127 <= ord(char) <= 159 or char in "\u2028\u2029"
+            else char
+            for char in value
+        )
+    else:
+        display = json.dumps(value, ensure_ascii=False)
+    return [f"{prefix}={display}"]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     verbose = getattr(args, "verbose", False)
@@ -123,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             config = load_config(explicit, profile_name)
             if args.command == "config":
-                result = config_show(config)
+                result = config_list(config)
             elif args.command == "rules":
                 result = initialize_rules(config["values"], args.dry_run)
             elif args.command == "build-report":
@@ -156,9 +193,16 @@ def main(argv: list[str] | None = None) -> int:
                     result = recover(profile, args.dry_run)
                 else:
                     result = verify(profile)
-        logging.log(SUCCESS, "%s completed", args.command)
+        listing = args.command == "config" and args.config_command == "list"
+        if listing:
+            logging.info("Showing resolved configuration")
+        else:
+            logging.log(SUCCESS, "%s completed", args.command)
         if args.command != "build-report":
-            print(json.dumps(result, ensure_ascii=False, indent=2))
+            if listing and not args.json:
+                print("\n".join(config_lines(result)))
+            else:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (ValueError, OSError, sqlite3.Error, yaml.YAMLError, KeyError, TypeError) as exc:
         logging.error("%s", exc, exc_info=verbose)
