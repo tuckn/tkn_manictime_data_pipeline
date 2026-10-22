@@ -101,6 +101,20 @@ def parser() -> argparse.ArgumentParser:
     report.add_argument(
         "--no-open", action="store_true", help="Do not open the browser (for weekly scheduled runs)"
     )
+    editor = commands.add_parser(
+        "review",
+        parents=[common],
+        help="Edit application rules in a local browser; rebuild all PC reports",
+    )
+    editor.add_argument(
+        "--port",
+        type=int,
+        default=8767,
+        help="Loopback port (default 8767; 0 chooses an available port)",
+    )
+    editor.add_argument(
+        "--no-open", action="store_true", help="Do not open the browser automatically"
+    )
     command = commands.add_parser(
         "recover",
         parents=[common],
@@ -163,6 +177,13 @@ def main(argv: list[str] | None = None) -> int:
                 result = config_list(config)
             elif args.command == "rules":
                 result = initialize_rules(config["values"], args.dry_run)
+            elif args.command == "review":
+                from .review import review
+
+                if profile_name:
+                    raise ValueError("review updates all profiles; omit --profile")
+                review(config, args.port, args.no_open)
+                return 0
             elif args.command == "build-report":
                 result = build_report(config, args.dry_run, profile_name, args.all)
                 for device in result["devices"]:

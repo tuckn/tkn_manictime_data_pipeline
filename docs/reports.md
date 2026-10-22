@@ -3,7 +3,8 @@
 `build-report` reads ingested CSV and creates one local HTML entry page.
 Choose all PCs or a profile next to the year/month/week filters. Inspect applications with
 ManicTime icons, websites, weekdays/hours and dictionary lookups. A separate page searches
-window titles and lists Google/Bing search terms. No network, CDN, AI, web server or Node.js is required.
+window titles and lists Google/Bing search terms. Viewing generated HTML requires no network, CDN, AI, web server or Node.js.
+The optional `review` command uses a local-only HTTP server for editing application rules.
 
 ## Configuration and use
 
@@ -17,6 +18,7 @@ report_lookup_gap_minutes: 30
 # These defaults normally need no overrides. Create the files with rules init.
 # application_rules_path: ~/.tkn/manictime_data_pipeline/rules/application_rules.csv
 # site_rules_path: ~/.tkn/manictime_data_pipeline/rules/site_rules.csv
+# application_overrides_path: ~/.tkn/manictime_data_pipeline/rules/application_overrides.yaml
 # extraction_rules_path: ~/.tkn/manictime_data_pipeline/rules/extraction_rules.yaml
 ```
 
@@ -104,13 +106,14 @@ Run `tkn-manictime-pipeline rules init` once. It copies packaged defaults to:
 ```text
 ~/.tkn/manictime_data_pipeline/rules/
   application_rules.csv
+  application_overrides.yaml
   site_rules.csv
   extraction_rules.yaml
 ```
 
 Existing files are preserved, including edits. `rules init --dry-run` lists actions without
-writing. The three optional path settings override these locations; no path settings are needed
-for normal use. `build-report` always reads all three files, even on a cache hit. Missing or
+writing. The four optional path settings override these locations; no path settings are needed
+for normal use. `build-report` always reads all four files, even on a cache hit. Missing or
 invalid files stop the command; `rules init` restores missing files only. For an empty rule set,
 keep the CSV header or use `rules: []` in the extraction YAML. Package upgrades do not overwrite
 user files. Compare updated package examples and merge desired changes yourself.
@@ -119,6 +122,104 @@ Editable files belong outside generated reports and source/Raw/CSV/state directo
 shared by profiles, with optional device/date restrictions for application rules. They are not
 copied into the per-PC output directories. These are ordinary UTF-8 files (BOM accepted), not
 the ingest CSV escaping format. Quote CSV cells containing commas, quotes or line breaks.
+
+### Browser editing and application_overrides.yaml
+
+After upgrading, run `rules init` again to add the new file without changing existing rules:
+
+```console
+tkn-manictime-pipeline rules init
+tkn-manictime-pipeline review
+```
+
+`review` builds all configured profiles and opens `http://127.0.0.1:8767/editor`.
+Every configured profile needs a successful ingest first. Search the recorded application
+inventory, add or edit classification/usage rules, move specific rules above broad rules,
+then select **Review changes** and **Save and update reports**. The editor shows the YAML diff
+before saving. All profiles rebuild after a save; refresh an already-open report to see it.
+Use `--no-open` to print the URL without launching a browser, or `--port 0` to choose a free
+port (the printed URL is authoritative). Stop the server with Ctrl+C. It only binds to loopback;
+no external service receives the data. The ordinary report remains a standalone offline HTML.
+
+Rules are stored in `~/.tkn/manictime_data_pipeline/rules/application_overrides.yaml` by default.
+Override `application_overrides_path` only to relocate the file. This YAML is always read by
+`build-report`, including weekly runs. Shared packaged defaults contain no personal usage labels.
+
+```yaml
+schema_version: "1.0.0"
+classifications:
+  - id: edge-beta-title
+    match:
+      file_name: msedge.exe
+      title: '*Microsoft Edge Beta'
+    set:
+      category: Browser
+      family: Edge
+      channel: Beta
+engagement:
+  - id: edge-beta-focus
+    match:
+      family: Edge
+      channel: Beta
+    set:
+      engagement: focus
+  - id: personal-apps
+    match:
+      group_path_prefix: 'C:\path\to\personal-apps'
+    set:
+      engagement: distracted
+```
+
+There are two independent first-match lists:
+
+| List | Input and result |
+| --- | --- |
+| `classifications` | Starts with built-in/CSV classification. First matching rule changes only the specified `category`, `family`, `channel`, `purpose` fields. YAML overrides CSV. |
+| `engagement` | Matches the resulting classification and assigns `focus`, `distracted`, `other`, or `unknown`. No match means `unknown`. |
+
+Each rule requires a unique nonempty `id`, a nonempty `match` mapping and a nonempty `set`
+mapping. Allowed conditions are `file_name`, `key`, `name`, `title`, `family`, `channel`,
+`device_id`, and `group_path_prefix`. Multiple conditions are ANDed. Except for the folder
+condition, values use case-insensitive shell globs (`*`, `?`, `[abc]`), not regular expressions.
+The folder condition is a literal Windows path prefix with a directory boundary, case-insensitive
+and accepting either slash. It does not match sibling folders with similar names or missing paths.
+`file_name` falls back to the first part of the ManicTime key when metadata has no filename.
+Optional `valid_from` / `valid_to` are quoted `YYYY-MM-DD` dates, inclusive, based on the activity's
+start date in the report timezone. Set categories are `Browser`, `Desktop app`, `System / Shell`,
+`Unknown`; family, channel and purpose are nonempty text. Empty lists disable overrides.
+
+A shared ManicTime group path can reflect a later install and is **not historical channel evidence**.
+Folder rules are an explicit user choice applied to that shared metadata. Prefer title or other
+verified device/date conditions for browser channels. A plain `Google Chrome` title stays
+`Unknown`: it must not silently become Stable, family communication, or focus. An explicit Beta
+title or verified custom condition can distinguish it. An app hierarchy and its usage label are
+independent: use the toolbar to switch category → family → channel → usage.
+
+Saving normalizes YAML formatting and removes comments. A byte-for-byte `before.yaml`, the
+proposed `after.yaml` and `decision.json` are retained under
+`<state_path>/rule-edits/<timestamp-id>/`. A revision check covers all four rule files; stale
+browser tabs cannot silently overwrite newer settings. Report generation and editor saves
+share the report lock. If saving succeeds but rebuilding fails, the editor reports that exact
+state: fix the cause and run `build-report --all`, without reapproving the same change. The
+previous report remains available. This command never alters ManicTime DBs or extracted CSV.
+
+### Usage by weekday and hour
+
+The additional chart shows two circles in each hour: focus on the left (blue) and distracted on
+the right (orange). Circle **area** is proportional to minutes on a shared scale; the series are
+never subtracted. A small hollow circle means zero, and a dash means no recorded days. Select
+or focus a cell for exact values; the accompanying table also lists other and unknown minutes.
+The four totals cover Active application time; unclassified time is visible instead of discarded.
+
+Each activity is intersected with ComputerUsage/Active and split at local hour/day boundaries.
+Minutes are divided by the number of recorded calendar days of that weekday in the selected
+period. This denominator is shared across usage labels. Recorded partial days remain included;
+it is not an estimate of unobserved time. Multiple PCs are summed (simultaneous use included),
+then divided by distinct dates; values can exceed 60 minutes per hour. This chart always uses
+Active application seconds, regardless of the ranking measure. It does not infer flow, actual
+attention, input, or objective achievement. Daily CSV contains `<role>_seconds` and
+`<role>_hourly`; application CSV contains `engagement`. The inventory also includes matching
+rule IDs, executable/group metadata and up to three example titles, not a complete title list.
 
 ### application_rules.csv
 

@@ -17,13 +17,15 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from .application_rules import ROLES, classify_application, group_context
 from .export import decode_cell
 from .report_history import pack_history
 from .report_rules import extract
 
 LOG = logging.getLogger(__name__)
-GENERATOR_VERSION = "2.0.0"
+GENERATOR_VERSION = "3.0.0"
 APP_FIELDS = ("category", "family", "channel", "purpose")
+REPORT_APP_FIELDS = (*APP_FIELDS, "engagement")
 CATEGORIES = {"Browser", "Desktop app", "System / Shell", "Unknown"}
 RULE_FIELDS = {"device_id", "valid_from", "valid_to", "match_field", "pattern", *APP_FIELDS}
 BROWSERS = {
@@ -244,6 +246,7 @@ def build_data(
     site_rules: list[dict],
     gap_minutes: int,
     extraction: list[dict],
+    overrides: dict | None = None,
 ) -> dict:
     root = profile.processed_path
     timelines = list(csv_rows(root / "Ar_Timeline/all.csv", {"ReportId", "SchemaName"}))
@@ -313,6 +316,7 @@ def build_data(
             "browser_active_seconds": 0.0,
             "web_active_seconds": 0.0,
             "hourly": [0.0] * 24,
+            "engagement_hourly": {role: [0.0] * 24 for role in ROLES},
         }
     )
     for start, end in available.intervals:
@@ -324,6 +328,7 @@ def build_data(
             daily[day]["hourly"][hour] += right - left
     periods = defaultdict(lambda: {"apps": {}, "domains": {}})
     inventory = {}
+    inventory_meta = {}
     lookups, unresolved = [], []
     history, history_payloads = [], {}
     dictionary_hosts = {h for r in extraction if r["kind"] == "dictionary" for h in r["hosts"]}
@@ -356,7 +361,10 @@ def build_data(
                 title = row.get("Name") or ""
                 day = datetime.fromtimestamp(start, tz).date().isoformat()
                 if kind == "apps":
-                    classification = classify(group, title, profile.device_id, day, app_rules)
+                    base = classify(group, title, profile.device_id, day, app_rules)
+                    classification, evidence = classify_application(
+                        base, group, title, profile.device_id, day, overrides
+                    )
                     apps[row["ActivityId"]] = (start, end, classification, title)
                     key = classification
                     icon_key = group_icons.get((row["ReportId"], row["GroupId"]))
@@ -379,8 +387,23 @@ def build_data(
                         group.get("Key") or "",
                         group.get("Name") or "Unknown",
                         *classification,
+                        evidence["classification_rule"],
+                        evidence["engagement_rule"],
                     )
                     bump(inventory, invkey, day, end - start, active.seconds(start, end), 1)
+                    metadata = inventory_meta.setdefault(
+                        invkey,
+                        {
+                            **group_context(group, "", profile.device_id),
+                            **evidence,
+                            "sample_titles": [],
+                        },
+                    )
+                    if (
+                        len(metadata["sample_titles"]) < 3
+                        and title not in metadata["sample_titles"]
+                    ):
+                        metadata["sample_titles"].append(title)
                 else:
                     try:
                         parsed = urlsplit(title)
@@ -440,10 +463,13 @@ def build_data(
                         else:
                             unresolved.append(evidence)
                 seen = set()
-                for part_day, _hour, left, right in pieces(start, end, tz):
+                for part_day, hour, left, right in pieces(start, end, tz):
                     seconds, active_seconds = right - left, active.seconds(left, right)
                     if kind == "apps":
                         daily[part_day]["app_active_seconds"] += active_seconds
+                        daily[part_day]["engagement_hourly"][classification[4]][hour] += (
+                            active_seconds
+                        )
                         if classification[0] == "Browser":
                             daily[part_day]["browser_active_seconds"] += active_seconds
                     elif parent and classification[0] == "Browser":
@@ -506,7 +532,10 @@ def build_data(
     for pid, period in periods.items():
         selected_days = [day for day in sorted(daily) if pid in period_ids(day)]
         period["days"] = selected_days
-        for kind, names in (("apps", APP_FIELDS), ("domains", ("host", "service", "purpose"))):
+        for kind, names in (
+            ("apps", REPORT_APP_FIELDS),
+            ("domains", ("host", "service", "purpose")),
+        ):
             period[kind] = [
                 {**dict(zip(names, key, strict=True)), **value, "days": sorted(value["days"])}
                 for key, value in period[kind].items()
@@ -548,7 +577,7 @@ def build_data(
         )
     for period in periods.values():
         for row in period["apps"]:
-            row["icon"] = app_icons.get(tuple(row[k] for k in APP_FIELDS), "")
+            row["icon"] = app_icons.get(tuple(row[k] for k in REPORT_APP_FIELDS), "")
     for value in inventory.values():
         value["days"] = len(value["days"])
     return {
@@ -570,7 +599,23 @@ def build_data(
         "unresolved_lookups": unresolved,
         "quality": dict(quality),
         "inventory": [
-            {**dict(zip(("key", "name", *APP_FIELDS), key, strict=True)), **value}
+            {
+                **inventory_meta[key],
+                **dict(
+                    zip(
+                        (
+                            "key",
+                            "name",
+                            *REPORT_APP_FIELDS,
+                            "classification_rule",
+                            "engagement_rule",
+                        ),
+                        key,
+                        strict=True,
+                    )
+                ),
+                **value,
+            }
             for key, value in sorted(inventory.items(), key=lambda p: -p[1]["active_seconds"])
         ],
     }

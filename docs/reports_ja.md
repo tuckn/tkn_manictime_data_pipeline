@@ -4,7 +4,8 @@
 年・月・週のフィルターと同じ場所で「すべてのPC」と個々のprofileを切り替えられます。
 アプリのアイコン、利用時間、サイト、曜日・時間帯、辞書で調べた語句を確認できます。
 別ページでウィンドウタイトルを検索し、Google・Bingなどの検索語の履歴も閲覧できます。
-外部通信、CDN、AI、Webサーバー、Node.jsは実行時に不要です。
+生成済みHTMLの閲覧に外部通信、CDN、AI、Webサーバー、Node.jsは不要です。
+分類を編集する任意の `review` コマンドだけは、PC内のWebサーバーを使います。
 
 ## 初回設定と基本操作
 
@@ -18,6 +19,7 @@ report_lookup_gap_minutes: 30
 # 次の3つは既定値なので、通常は設定不要です。
 # application_rules_path: ~/.tkn/manictime_data_pipeline/rules/application_rules.csv
 # site_rules_path: ~/.tkn/manictime_data_pipeline/rules/site_rules.csv
+# application_overrides_path: ~/.tkn/manictime_data_pipeline/rules/application_overrides.yaml
 # extraction_rules_path: ~/.tkn/manictime_data_pipeline/rules/extraction_rules.yaml
 ```
 
@@ -99,13 +101,14 @@ UTC時刻から指定タイムゾーンへ変換し、時間・日・週・月�
 ```text
 ~/.tkn/manictime_data_pipeline/rules/
   application_rules.csv
+  application_overrides.yaml
   site_rules.csv
   extraction_rules.yaml
 ```
 
 既存ファイルは編集内容ごと保持します。`rules init --dry-run` は予定だけを表示します。
-別の場所を使う場合にだけ、対応する3つのパス設定を変更します。
-`build-report` はキャッシュを再利用する場合も **毎回3ファイルすべてを読み込み**ます。
+別の場所を使う場合にだけ、対応する4つのパス設定を変更します。
+`build-report` はキャッシュを再利用する場合も **毎回4ファイルすべてを読み込み**ます。
 不足・書式エラーがあれば停止します。`rules init` は不足分だけを復元できます。
 ルールなしにするには、CSVのヘッダーを残すか、抽出YAMLを `rules: []` にしてください。
 インストールの更新でユーザー用ファイルは上書きしません。新しい初期例の変更は必要なものだけ取り込みます。
@@ -113,6 +116,102 @@ UTC時刻から指定タイムゾーンへ変換し、時間・日・週・月�
 ルールは全profileで共有し、レポートのPC別フォルダにはコピーしません。
 生成物や入力・Raw・CSV・stateの外側で管理します。CSVは通常のUTF-8（BOMも可）で、
 カンマや改行を含むセルはCSV形式で引用します。取得CSV専用のバックスラッシュ表現は使いません。
+
+### ブラウザ編集と application_overrides.yaml
+
+更新後は `rules init` を再実行してください。既存の設定を保持し、新しいYAMLだけを追加します。
+
+```console
+tkn-manictime-pipeline rules init
+tkn-manictime-pipeline review
+```
+
+`review` は全profileのレポートを更新し、`http://127.0.0.1:8767/editor` を開きます。
+全profileで事前に `ingest` が成功している必要があります。記録済みアプリを検索し、種類・用途の
+ルールを追加・変更して、「変更内容を確認する」→「この変更を保存してレポートを更新」と進みます。
+保存前にはYAMLの差分が表示されます。狭い条件のルールを上へ移動してください。
+保存すると全PCを再集計します。開いたままのレポートは再読み込みで更新されます。
+
+`--no-open` はブラウザを開かずURLを表示します。ポートが使用中なら `--port 0` で空きを選び、
+表示されたURLを開いてください。終了は Ctrl+C です。サーバーはこのPC内のループバックだけで動き、
+外部サービスにデータを送りません。生成済みHTMLは引き続きサーバーなしで閲覧できます。
+
+保存先の既定値は `~/.tkn/manictime_data_pipeline/rules/application_overrides.yaml` です。
+移動する場合だけ `application_overrides_path` を指定します。毎週の `build-report` でも必ず読みます。
+配布時の初期ファイルには個人的な用途判断を含めず、空のルールを用意しています。
+
+```yaml
+schema_version: "1.0.0"
+classifications:
+  - id: edge-beta-title
+    match:
+      file_name: msedge.exe
+      title: '*Microsoft Edge Beta'
+    set:
+      category: Browser
+      family: Edge
+      channel: Beta
+engagement:
+  - id: edge-beta-focus
+    match:
+      family: Edge
+      channel: Beta
+    set:
+      engagement: focus
+  - id: personal-apps
+    match:
+      group_path_prefix: 'C:\path\to\personal-apps'
+    set:
+      engagement: distracted
+```
+
+2つのリストを順に処理し、それぞれで最初に一致したルールだけを採用します。
+
+| リスト | 判定・変更内容 |
+| --- | --- |
+| `classifications` | 内蔵判定・分類CSVの結果を元に、指定した `category`・`family`・`channel`・`purpose` だけを変更。YAMLがCSVより優先されます。 |
+| `engagement` | 変更後の種類を含む条件で用途を判定。`focus`＝集中、`distracted`＝だらけ、`other`＝その他、`unknown`＝用途未分類。一致しなければ用途未分類です。 |
+
+各ルールは、一意で空でない `id`、空でない `match`、空でない `set` が必須です。
+条件に使えるのは `file_name`・`key`・`name`・`title`・`family`・`channel`・`device_id`・
+`group_path_prefix` です。複数指定はすべてに一致した場合に適用します。
+フォルダ条件以外は、大文字小文字を区別しないワイルドカード（`*`・`?`・`[abc]`）で、正規表現ではありません。
+フォルダ条件はWindowsのパスをそのまま指定し、フォルダ境界を含めて照合します。区切り文字はどちらでも使えます。
+似た名前の隣接フォルダやパス不明の記録には一致しません。
+`file_name` はメタデータに値がない場合、ManicTimeのキーの先頭部分を使います。
+任意の `valid_from`・`valid_to` は引用した `YYYY-MM-DD`、両端を含み、レポートのタイムゾーンでの
+活動開始日を基準にします。日付をまたぐ活動にも開始日の判定を適用します。
+大分類は `Browser`・`Desktop app`・`System / Shell`・`Unknown`、系列・種類・用途メモは空でない文字列です。
+リストを `[]` にすると、その段階の上書きは無効になります。
+
+ManicTimeのグループの実行パスは後のインストール状況を表す場合があり、**過去の種類を証明しません**。
+フォルダ条件は、この共有メタデータを利用者の明示指定で適用するものです。
+ブラウザ種類は、タイトルや確認済みのPC・期間条件などで設定してください。
+単に `Google Chrome` としか残っていない記録は種類不明です。通常版・家族との交流・集中へ自動で振り分けません。
+Betaの明示や確かなカスタム条件がある場合だけ区別できます。
+アプリの種類と用途は独立しており、レポート上部で大分類 → 系列 → 詳細 → 用途を切り替えられます。
+
+保存時にYAMLの書式を整えるため、コメントは除去されます。変更前の原本 `before.yaml`、変更後の
+`after.yaml`、処理結果 `decision.json` を `<state_path>/rule-edits/<日時-ID>/` に保持します。
+4つのルールファイルの版を確認し、古い画面からの上書きを防ぎます。レポート生成と保存は同じロックで調整します。
+設定保存後に集計が失敗した場合は、その状態を画面に表示します。同じ変更を再保存せず、原因を解決して
+`build-report --all` を実行してください。前のレポートは残ります。DBや取得済みCSVは変更しません。
+
+### 集中・だらけの時間帯
+
+従来のActiveヒートマップに加え、各マスに集中を左の青丸、だらけを右の橙丸で表示します。
+丸の**面積**が時間に比例し、両者は共通の尺度です。差し引きはしません。
+小さい輪は0分、`—` は記録日なしです。マスの選択・キーボードフォーカスで正確な分数を確認でき、
+数値表ではその他・用途未分類も確認できます。4つの合計はActive中のアプリ時間を表します。
+
+活動区間と ComputerUsage/Active の重なりを求め、ローカル時刻の時・日の境界で分割します。
+同じ曜日の記録のある暦日数で割った「分/日」で、4用途とも同じ分母です。一部だけ記録された日も含み、
+未観測時間を補完しません。複数PCは同時利用も足し、その後に重複しない日数で割るため、60分を超えることがあります。
+ランキングの時間設定にかかわらず、この図はActive中のアプリ時間を使います。
+利用者の用途ラベルに基づく内訳であり、実際の集中・フロー・入力・目標達成を判定するものではありません。
+日別CSVに `<role>_seconds`・`<role>_hourly`、アプリCSVに `engagement` を収録します。
+分類一覧には適用したルールID、実行ファイル・グループのメタデータ、最大3件のタイトル例も含みます。
+全タイトルは従来の履歴ページから確認してください。
 
 ### application_rules.csv：アプリの分類
 

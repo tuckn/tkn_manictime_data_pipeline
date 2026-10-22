@@ -15,6 +15,7 @@ RULE_FILES = {
     "application_rules_path": "application_rules.csv",
     "site_rules_path": "site_rules.csv",
     "extraction_rules_path": "extraction_rules.yaml",
+    "application_overrides_path": "application_overrides.yaml",
 }
 
 

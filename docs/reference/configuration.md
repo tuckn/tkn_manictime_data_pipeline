@@ -92,3 +92,11 @@ Only one selected profile runs per invocation; other sources are not automatical
 A published dataset is bound to its resolved source path, Raw root and device ID.
 The CSV root and profile name are also bound to state. Changing these bindings is rejected.
 Moving existing data or renaming a profile requires a separate, verified procedure.
+
+## Application hierarchy and usage labels
+
+`application_overrides_path` defaults to
+`~/.tkn/manictime_data_pipeline/rules/application_overrides.yaml`. Run `rules init`
+after upgrading to create it. `review` edits this file in a local browser, and
+`build-report` always reads it. See the [report guide](../reports.md#browser-editing-and-application_overridesyaml)
+for its schema, priority, backups and the weekday/hour chart.

@@ -18,6 +18,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import transaction
+from .application_rules import ROLES, parse_application_rules
 from .config import path_value, selected_profile
 from .io import child_path, process_lock, read_json, sha256_file
 from .report_data import GENERATOR_VERSION, build_data, report_cutoff, rules_from
@@ -113,11 +114,25 @@ def render_report(data: dict, resource="report.html") -> bytes:
     template = files("manictime_pipeline").joinpath("resources", resource).read_text("utf-8")
     payload = canonical(data).decode("utf-8").replace("&", "\\u0026").replace("<", "\\u003c")
     payload = payload.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    if "__ENGAGEMENT_JS__" in template:
+        script = files("manictime_pipeline").joinpath("resources/engagement.js").read_text("utf-8")
+        template = template.replace("__ENGAGEMENT_JS__", script)
     return template.replace("__REPORT_DATA__", payload).encode("utf-8")
 
 
 def output_payloads(data: dict) -> dict[str, bytes]:
-    daily = [{"day": day, **row} for day, row in data["daily"].items()]
+    daily = [
+        {
+            "day": day,
+            **row,
+            **{
+                f"{role}_seconds": sum(row.get("engagement_hourly", {}).get(role, []))
+                for role in ROLES
+            },
+            **{f"{role}_hourly": row.get("engagement_hourly", {}).get(role, []) for role in ROLES},
+        }
+        for day, row in data["daily"].items()
+    ]
     apps, domains = [], []
     for pid, period in sorted(data["periods"].items()):
         apps.extend({"period": pid, **row} for row in period["apps"])
@@ -145,6 +160,8 @@ def output_payloads(data: dict) -> dict[str, bytes]:
                 "browser_active_seconds",
                 "web_active_seconds",
                 "hourly",
+                *[f"{role}_seconds" for role in ROLES],
+                *[f"{role}_hourly" for role in ROLES],
             ],
         ),
         "applications.csv": csv_bytes(
@@ -155,6 +172,7 @@ def output_payloads(data: dict) -> dict[str, bytes]:
                 "family",
                 "channel",
                 "purpose",
+                "engagement",
                 "active_seconds",
                 "foreground_seconds",
                 "intervals",
@@ -183,10 +201,16 @@ def output_payloads(data: dict) -> dict[str, bytes]:
             [
                 "key",
                 "name",
+                "file_name",
+                "group_path_prefix",
+                "sample_titles",
+                "classification_rule",
+                "engagement_rule",
                 "category",
                 "family",
                 "channel",
                 "purpose",
+                "engagement",
                 "active_seconds",
                 "foreground_seconds",
                 "intervals",
@@ -360,30 +384,45 @@ def build_report(
     ]
     paths = rule_paths(values)
     validate_report_paths(root, profiles, list(paths.values()))
-    # Always read all three user files, even when the aggregation cache is reusable.
-    for path in paths.values():
-        if not path.is_file():
-            raise ValueError(f"Missing report rules: {path}; run rules init first")
-    app_rules = rules_from(paths["application_rules_path"])
-    site_rules = rules_from(paths["site_rules_path"], sites=True)
-    extraction = extraction_rules(paths["extraction_rules_path"])
     cutoff = report_cutoff(tz)
     resources = files("manictime_pipeline")
     data_code = b"".join(
         resources.joinpath(name).read_bytes()
-        for name in ("report_data.py", "report_rules.py", "report_history.py")
+        for name in (
+            "report_data.py",
+            "report_rules.py",
+            "report_history.py",
+            "application_rules.py",
+        )
     )
     view_code = b"".join(
         resources.joinpath(name).read_bytes()
-        for name in ("reports.py", "resources/report.html", "resources/history.html")
+        for name in (
+            "reports.py",
+            "resources/report.html",
+            "resources/history.html",
+            "resources/engagement.js",
+        )
     )
-    rule_signature = hashlib.sha256(
-        canonical([app_rules, site_rules, extraction, values["report_lookup_gap_minutes"]])
-    ).hexdigest()
     lock_key = hashlib.sha256(str(root).casefold().encode()).hexdigest()
     report_lock = path_value(values["state_path"]) / "_report-locks" / lock_key
     with ExitStack() as stack:
         stack.enter_context(nullcontext() if dry_run else process_lock(report_lock))
+        # Validate every user rule file, even when data is reusable.
+        for path in paths.values():
+            if not path.is_file():
+                raise ValueError(f"Missing report rules: {path}; run rules init first")
+        app_rules = rules_from(paths["application_rules_path"])
+        site_rules = rules_from(paths["site_rules_path"], sites=True)
+        extraction = extraction_rules(paths["extraction_rules_path"])
+        overrides = parse_application_rules(
+            paths["application_overrides_path"].read_text("utf-8-sig")
+        )
+        rule_signature = hashlib.sha256(
+            canonical(
+                [app_rules, site_rules, extraction, overrides, values["report_lookup_gap_minutes"]]
+            )
+        ).hexdigest()
         old = root_manifest(root)
         devices = dict(old["devices"])
         result = {
@@ -416,6 +455,7 @@ def build_report(
                     "application_rules": app_rules,
                     "site_rules": site_rules,
                     "extraction_rules": extraction,
+                    "application_overrides": overrides,
                     "lookup_gap_minutes": values["report_lookup_gap_minutes"],
                     "data_code_sha256": hashlib.sha256(data_code).hexdigest(),
                 }
@@ -444,6 +484,7 @@ def build_report(
                         site_rules,
                         values["report_lookup_gap_minutes"],
                         extraction,
+                        overrides,
                     )
                     history_payloads = data.pop("_history_payloads")
                     data["generator_version"] = GENERATOR_VERSION

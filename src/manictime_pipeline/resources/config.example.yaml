@@ -12,6 +12,7 @@ report_lookup_gap_minutes: 30
 # Run rules init once. These default paths normally need no overrides.
 # application_rules_path: ~/.tkn/manictime_data_pipeline/rules/application_rules.csv
 # site_rules_path: ~/.tkn/manictime_data_pipeline/rules/site_rules.csv
+# application_overrides_path: ~/.tkn/manictime_data_pipeline/rules/application_overrides.yaml
 # extraction_rules_path: ~/.tkn/manictime_data_pipeline/rules/extraction_rules.yaml
 # Durable checkpoints, provenance, run records and recovery files; not disposable cache.
 # state_path defaults to ~/.tkn/manictime_data_pipeline/state

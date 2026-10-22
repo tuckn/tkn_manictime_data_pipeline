@@ -28,6 +28,7 @@ TOP_KEYS = {
     "application_rules_path",
     "site_rules_path",
     "extraction_rules_path",
+    "application_overrides_path",
     "report_lookup_gap_minutes",
 }
 
@@ -174,6 +175,7 @@ def load_config(explicit: Path | None = None, profile_name: str | None = None) -
         "application_rules_path": str(app_root() / "rules/application_rules.csv"),
         "site_rules_path": str(app_root() / "rules/site_rules.csv"),
         "extraction_rules_path": str(app_root() / "rules/extraction_rules.yaml"),
+        "application_overrides_path": str(app_root() / "rules/application_overrides.yaml"),
         "profiles": {},
     }
     origins = {key: "built-in" for key in values if key != "profiles"}
@@ -284,6 +286,7 @@ def config_list(config: dict) -> dict:
         "application_rules_path",
         "site_rules_path",
         "extraction_rules_path",
+        "application_overrides_path",
         *OUTPUT_KEYS,
     ):
         if key in values:

@@ -1,0 +1,5 @@
+schema_version: "1.0.0"
+# First matching rule in each list wins. See docs/reports.md for the full format.
+# Personal activity labels are deliberately empty until you define them.
+classifications: []
+engagement: []
