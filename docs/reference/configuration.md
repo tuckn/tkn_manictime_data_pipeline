@@ -26,6 +26,8 @@ Nested mappings use dots and list entries use indexes such as `[0]`. Empty lists
 Windows paths retain single backslashes, while control characters are escaped.
 Use `tkn-manictime-pipeline config list --json` for structured JSON with the same information.
 Both formats send the INFO listing message to stderr; `--quiet` suppresses that message.
+All commands follow the same [CLI output contract](cli-output.md), including failures and interrupts.
+Output options can appear at the root, group or leaf level without being reset by subcommands.
 
 Without `--config`, both the user config at `~/.tkn/manictime_data_pipeline/config.yaml`
 and the current directory's `.tkn/config.yaml` are discovered automatically; missing optional

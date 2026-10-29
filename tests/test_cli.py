@@ -124,11 +124,9 @@ def test_config_list_help_removed_show_and_error(isolated, capsys):
         main(["config", "list", "--help"])
     assert exc.value.code == 0
     assert "--json" in capsys.readouterr().out
-    with pytest.raises(SystemExit) as exc:
-        main(["config", "show"])
-    assert exc.value.code == 2
+    assert main(["config", "show"]) == 2
     capsys.readouterr()
     assert main(["config", "list", "--config", "missing.yaml"]) == 1
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert "status=failed" in captured.out
     assert "[ERROR]" in captured.err

@@ -9,6 +9,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from .diagnostics import error_target
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -19,10 +21,11 @@ def sha256_file(path: Path) -> str:
 
 
 def read_json(path: Path) -> dict:
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError(f"Expected a JSON object: {path}")
-    return value
+    with error_target(path, "json_file"):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError(f"Expected a JSON object: {path}")
+        return value
 
 
 def atomic_json(path: Path, data: dict) -> None:

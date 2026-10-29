@@ -92,8 +92,8 @@ tkn-manictime-pipeline verify
 
 ### 結果を確認・利用する
 
-処理結果の絶対パスは標準出力の JSON に、進捗は標準エラーに表示されます。
-`config list` は設定を `key=value` で表示し、`--json` 指定時に JSON を出します。
+処理結果と絶対パスは標準出力の `key=value` 一覧に、進捗は標準エラーに表示されます。
+全コマンドで `--json` を指定すると、一覧の代わりに機械処理用の JSON を出します。
 
 | 保存先 | 役割 |
 | --- | --- |
@@ -172,7 +172,7 @@ tkn-manictime-pipeline review
 | 既定PC（または全PC）を更新し、統合HTMLを生成 | `build-report [--all] [--dry-run] [--no-open]` |
 | 不足している編集用ルールを作成 | `rules init [--dry-run]` |
 
-共通オプションは `--config PATH`、`--profile NAME`、
+共通オプションは `--config PATH`、`--profile NAME`、`--json`、`--full-output`、
 `-q/--quiet`、`-v/--verbose` です。
 コマンドの前後に指定できます。quiet と verbose は同時指定できません。
 `config init` は常にユーザー設定を対象とし、`--config`・`--profile` を受け付けません。
@@ -180,12 +180,50 @@ tkn-manictime-pipeline review
 
 終了コードは成功 0、設定・処理エラー 1、引数の使用誤り 2、中断 130 です。
 quiet でも標準出力の結果は表示されます。verbose ではエラーの traceback も表示します。
-`config list` は既定で1行に1つの `key=value` を表示し、Windows パスの `\` を重ねずに表示します。
+設定一覧、設定作成、取り込み、検証、復旧、ルール作成、レポート生成、編集画面の終了結果は、
+既定で1行に1つの `key=value` を表示します。Windows パスの `\` は重ねず、省略・切り詰めもしません。
 入れ子は `.`、配列は `[0]` などで表し、空の配列・マッピングは `[]`・`{}`、真偽値は
 `true`・`false`、未設定値は `null` です。改行などの制御文字はエスケープします。
-JSON が必要な場合は `tkn-manictime-pipeline config list --json` を使います。
-一覧表示のログは標準エラーへ INFO で出し、設定・state・cache・report を作成・更新しません。
+JSON が必要な場合は `--json` を指定します。`--json config list`、`config --json list`、
+`config list --json` のどの位置でも指定できます。エラー・中断時も選択した形式で結果を出します。
+ログは標準エラーだけに出し、quiet/verbose、TTY・パイプ・リダイレクトで結果形式を変えません。
+設定一覧のログは INFO です。`config list` は設定・state・cache・report を作成・更新しません。
 対応した対話端末でのみ ANSI 色を使い、`NO_COLOR` に従います。
+
+結果には `status`、`command`、`exit_code` とコマンド固有の値を表示します。
+件数は `counts` または既存の `partitions`・`rows` などに、失敗は `errors` に表示します。
+対象パスは `errors[0].targets[0].path`、理由は `errors[0].reason` のように別々の項目です。
+`ingest` の変更なしパーティションは既定で件数にまとめます。`--full-output` を付けると、
+一覧・JSONのどちらでも全パーティションの詳細を確認できます。失敗対象は省略しません。
+`review` の最終結果は編集画面のサーバーを停止した後に表示します。
+
+人が確認する例と、結果を解析する例です。
+
+```shell
+tkn-manictime-pipeline ingest --dry-run
+tkn-manictime-pipeline ingest --dry-run --json --full-output
+tkn-manictime-pipeline build-report --no-open --json
+```
+
+```python
+import json
+import subprocess
+
+completed = subprocess.run(
+    ["tkn-manictime-pipeline", "ingest", "--dry-run", "--json", "--full-output"],
+    capture_output=True,
+    text=True,
+    encoding="utf-8",
+    check=False,
+)
+result = json.loads(completed.stdout)
+if completed.returncode == 0:
+    print(result["processed_path"])
+else:
+    print(result["errors"])
+```
+
+[結果のキー・型・詳細表示の仕様](docs/reference/cli-output.md)を参照してください。
 
 `ingest` の created / updated / unchanged は **CSV データセット**に対する状態です。
 CSV が unchanged でも両 DB の取得と実行記録の保存は行います。Raw の内容が変わっていれば
@@ -281,6 +319,7 @@ CSV 保存先とプロファイル名も state と結び付きます。これら
 ```
 
 定期実行用設定のデータパスには絶対パスを推奨します。
+JSON を解析して後続処理に渡すタスクでは、`--json` を指定します。
 実行アカウントのホームが設定・state の基準になります。
 Task Scheduler は重複起動しない設定にします。CLI は解決後の Raw・CSV 保存先ごとのロックを state に置きます。
 同じデータ保存先へ書き込む実行では、同じ `state_path` と Windows アカウントを使用してください。
@@ -481,7 +520,8 @@ uv build
 schema 変更、出力破損、Raw 移動間・CSV 差し替え中・確定後のプロセス強制終了、復旧、
 Raw 保持容量、活動件数減少の停止、未管理ファイルとの衝突、
 state の書き込み失敗、ロック、設定階層の厳密な検証、
-日本語・BLOB・NULL の CSV、標準エラーと JSON の分離を確認します。
+日本語・BLOB・NULL の CSV、標準エラーと結果の分離、一覧/JSON・詳細表示、引数/設定/実行エラー、
+中断、quiet/verbose、パイプとリダイレクト、パスのコピー可能性、dry-run の非変更を確認します。
 CLI・設定、SQLite アクセス、CSV の逐次処理、パイプラインの公開、ファイル・ログ処理に責務を分離しています。
 実データや個人情報をテストには含めません。
 [ingest実行記録の例](docs/manifest.example.json)と[確定ポインターの例](docs/current.example.json)は、

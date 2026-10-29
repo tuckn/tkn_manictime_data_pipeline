@@ -392,7 +392,10 @@ def test_cli_report_browser_and_stdout(report_config, monkeypatch, capsys, optio
     assert cli.main(["build-report", *options]) == 0
     assert len(launched) == opens
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert "status=success" in captured.out
+    assert f"index={report_config['values']['report_path']}/index.html".replace(
+        "/", "\\"
+    ) in captured.out.replace("/", "\\")
     assert "Report:" in captured.err
 
 

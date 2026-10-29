@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .database import DB_NAMES, check_snapshot_sidecars, quick_check
 from .database import readonly_snapshot as readonly
+from .diagnostics import target_error
 from .io import child_path, sha256_file
 
 
@@ -30,7 +31,9 @@ def validate(manifest: dict, *, integrity: bool = False) -> None:
             or path.stat().st_size != item["bytes"]
             or sha256_file(path) != item["sha256"]
         ):
-            raise ValueError(f"Raw database checksum mismatch: {path}")
+            raise target_error(
+                ValueError(f"Raw database checksum mismatch: {path}"), path, "raw_database"
+            )
         if integrity:
             with readonly(path) as connection:
                 quick_check(connection)

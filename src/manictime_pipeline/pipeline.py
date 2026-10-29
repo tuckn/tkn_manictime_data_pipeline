@@ -9,6 +9,7 @@ from pathlib import Path
 from . import __version__, raw, transaction
 from .config import Profile
 from .database import DB_NAMES, backup, now, readonly, readonly_snapshot, schema
+from .diagnostics import target_error
 from .export import changes, export_changed, fingerprint
 from .io import atomic_json, child_path, read_json, sha256_file
 from .validation import validate_artifacts, validate_csv_contract
@@ -75,9 +76,13 @@ def _check_raw_destination(profile: Profile, previous: dict | None) -> None:
     if not previous:
         for name in DB_NAMES:
             if (profile.raw_directory / name).exists():
-                raise ValueError(
-                    f"Unmanaged Raw file; preserve it separately before publication: "
-                    f"{profile.raw_directory / name}"
+                raise target_error(
+                    ValueError(
+                        f"Unmanaged Raw file; preserve it separately before publication: "
+                        f"{profile.raw_directory / name}"
+                    ),
+                    profile.raw_directory / name,
+                    "unmanaged_raw",
                 )
 
 
@@ -86,10 +91,15 @@ def _preflight(profile: Profile) -> dict | None:
     previous = load_current(profile)
     unknown = unmanaged_csv(profile, previous)
     if unknown:
-        raise ValueError(
+        exc = ValueError(
             f"Unmanaged CSV files exist; preserve them in a separate folder first: "
             f"{unknown[:5]} ({len(unknown)} files)"
         )
+        exc.cli_targets = [
+            {"role": "unmanaged_csv", "path": str(profile.processed_path / name)}
+            for name in unknown
+        ]
+        raise exc
     if previous:
         validate_artifacts(profile, previous)
         raw.validate(previous)

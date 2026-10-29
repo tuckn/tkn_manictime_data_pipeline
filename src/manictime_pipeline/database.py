@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .diagnostics import target_error
 from .io import sha256_file
 
 DB_NAMES = ("ManicTimeCore.db", "ManicTimeReports.db")
@@ -33,9 +34,13 @@ def quote(name: str) -> str:
 def check_snapshot_sidecars(path: Path) -> None:
     for suffix in ("-wal", "-shm", "-journal"):
         if Path(str(path) + suffix).exists():
-            raise ValueError(
-                f"Unexpected SQLite sidecar beside Raw; close external readers/writers "
-                f"and inspect before continuing: {path}{suffix}"
+            raise target_error(
+                ValueError(
+                    f"Unexpected SQLite sidecar beside Raw; close external readers/writers "
+                    f"and inspect before continuing: {path}{suffix}"
+                ),
+                Path(str(path) + suffix),
+                "sqlite_sidecar",
             )
 
 
@@ -46,11 +51,18 @@ def readonly(path: Path, *, snapshot: bool = False):
         check_snapshot_sidecars(path)
         # Only completed backup copies are immutable while open. Never use for a live source.
         uri += "&immutable=1"
-    connection = sqlite3.connect(uri, uri=True, timeout=5)
+    try:
+        connection = sqlite3.connect(uri, uri=True, timeout=5)
+    except sqlite3.Error as exc:
+        target_error(exc, path, "database")
+        raise
     try:
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA temp_store=MEMORY")
         yield connection
+    except (ValueError, sqlite3.Error) as exc:
+        target_error(exc, path, "database")
+        raise
     finally:
         connection.close()
 

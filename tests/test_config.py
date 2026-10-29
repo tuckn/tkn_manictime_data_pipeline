@@ -159,13 +159,13 @@ def test_cli_json_and_diagnostics(profile, isolated, capsys):
             },
         },
     )
-    assert main(["--config", str(config), "ingest", "--dry-run"]) == 0
+    assert main(["--config", str(config), "ingest", "--dry-run", "--json"]) == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out)["action"] == "dry_run"
     assert "[SUCCESS]" in captured.err
     assert main(["inspect", "--config", str(config), "--profile", "missing"]) == 1
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert "status=failed" in captured.out
     assert "[ERROR]" in captured.err
 
 
@@ -176,11 +176,11 @@ def test_cli_config_init_rejects_profile(isolated, capsys):
     assert "[ERROR]" in capsys.readouterr().err
 
 
-def test_cli_quiet_verbose_conflict_across_subcommands(isolated):
+def test_cli_quiet_verbose_conflict_across_subcommands(isolated, capsys):
     from manictime_pipeline.cli import main
 
-    with pytest.raises(SystemExit):
-        main(["--quiet", "config", "list", "--verbose"])
+    assert main(["--quiet", "config", "list", "--verbose", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["exit_code"] == 2
 
 
 @pytest.mark.parametrize("layer", ["home", "cwd"])
@@ -198,7 +198,7 @@ def test_cli_discovers_config_without_options(profile, isolated, capsys, layer):
             },
         },
     )
-    assert main(["ingest", "--dry-run"]) == 0
+    assert main(["ingest", "--dry-run", "--json"]) == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out)["profile"] == "desktop"
     assert config_list(load_config())["sources"][0]["path"] == str(path)

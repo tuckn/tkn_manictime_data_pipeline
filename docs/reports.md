@@ -36,7 +36,9 @@ tkn-manictime-pipeline build-report --all
 
 Normal execution writes reports and opens the finished index in the OS default browser.
 `--no-open` suppresses only the browser launch. Browser failure keeps the generated files and
-prints their path. Progress and result paths go to stderr; this command emits no JSON to stdout.
+prints their path. Progress and warnings go to stderr. The final result (including `index`,
+`report_path`, `dry_run`, `devices` and counts) goes to stdout as `key=value`, or JSON with `--json`.
+See the [CLI output contract](reference/cli-output.md). Output flags do not change report files or browser behavior.
 
 By default, only **default_profile** is updated, matching `ingest`. `--profile NAME` updates
 one named PC; `--all` updates every configured profile. `--profile` and `--all` are mutually
@@ -133,6 +135,8 @@ tkn-manictime-pipeline review
 ```
 
 `review` builds all configured profiles and opens `http://127.0.0.1:8767/editor`.
+Its final stdout result is emitted after the server stops (`action=stopped`); `--json` selects JSON.
+Ctrl+C while serving remains a normal stop with exit code 0. Interrupting setup/rebuild returns 130.
 Every configured profile needs a successful ingest first. Search the recorded application
 inventory, add or edit classification/usage rules, move specific rules above broad rules,
 then select **Review changes** and **Save and update reports**. The editor shows the YAML diff

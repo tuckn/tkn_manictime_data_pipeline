@@ -68,12 +68,11 @@ def test_unmanaged_csv_in_any_subfolder_blocks_publication(profile):
 
 
 def test_migration_command_is_not_available(capsys):
-    from manictime_pipeline.cli import parser
+    from manictime_pipeline.cli import ArgumentError, parser
 
     assert "migrate-layout" not in parser().format_help()
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(ArgumentError):
         parser().parse_args(["migrate-layout"])
-    assert exc.value.code == 2
 
 
 def test_bom_bytes_are_rejected_even_with_matching_hash(profile):

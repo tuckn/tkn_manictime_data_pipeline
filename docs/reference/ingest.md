@@ -4,6 +4,10 @@ This reference describes how the CLI captures ManicTime databases, publishes CSV
 recovers interrupted updates. Start with the
 [README's first-run steps](../../README.md#create-the-first-report) for normal use.
 
+All commands use the [CLI output contract](cli-output.md): `key=value` by default,
+explicit `--json` for parsers, and `--full-output` for all unchanged partition details.
+These options do not change Raw/CSV publication, stored manifests or dry-run side effects.
+
 ## Raw capture
 
 Both databases are saved with Python's [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup).

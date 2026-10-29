@@ -34,7 +34,9 @@ tkn-manictime-pipeline build-report --all
 通常実行は書き込み後、OSの既定ブラウザで `index.html` を開きます。
 `--no-open` はブラウザ起動だけを抑制します。ブラウザ起動に失敗しても生成物は残ります。
 `--dry-run` は検証・集計だけを行い、ファイル、ロック、ブラウザを作成・起動しません。
-進捗と出力先はstderrに表示し、このコマンドはstdoutにJSONを出力しません。
+進捗・警告はstderrへ、最終結果（`index`、`report_path`、`dry_run`、`devices`、件数）は
+stdoutへ `key=value` で表示します。`--json` ならJSONになります。
+[CLI出力の仕様](reference/cli-output.md)を参照してください。表示指定で生成物やブラウザの動作は変わりません。
 
 既定の出力先 `reports` は、人が閲覧するレポートをRaw・CSVの `data` と分離するためのものです。
 `report_path` は自由に変更できますが、入力、Raw、CSV、stateと親子関係を含めて重なる配置は使えません。
@@ -127,6 +129,8 @@ tkn-manictime-pipeline review
 ```
 
 `review` は全profileのレポートを更新し、`http://127.0.0.1:8767/editor` を開きます。
+最終結果はサーバー停止後に `action=stopped` としてstdoutへ表示し、`--json` でJSONにできます。
+サーバー稼働中のCtrl+Cは従来どおり正常停止（終了コード0）、準備・再生成中の中断は130です。
 全profileで事前に `ingest` が成功している必要があります。記録済みアプリを検索し、種類・用途の
 ルールを追加・変更して、「変更内容を確認する」→「この変更を保存してレポートを更新」と進みます。
 保存前にはYAMLの差分が表示されます。狭い条件のルールを上へ移動してください。

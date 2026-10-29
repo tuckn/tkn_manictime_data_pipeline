@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import yaml
 
 from .config import UniqueLoader, app_root, path_value
+from .diagnostics import error_target, progress_items
 
 RULE_FILES = {
     "application_rules_path": "application_rules.csv",
@@ -29,21 +30,27 @@ def rule_paths(values):
 def initialize_rules(values, dry_run=False):
     """Create missing files exclusively; never replace user edits."""
     result = []
-    for key, target in rule_paths(values).items():
-        name = RULE_FILES[key]
-        resource = name.replace(".csv", ".example.csv")
-        payload = files("manictime_pipeline").joinpath("resources", resource).read_bytes()
-        exists = target.exists()
-        if not exists and not dry_run:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("xb") as stream:
-                stream.write(payload)
-        result.append(
-            {
-                "path": str(target),
-                "action": "preserved" if exists else "would_create" if dry_run else "created",
-            }
-        )
+    with progress_items(result):
+        for key, target in rule_paths(values).items():
+            with error_target(target, key):
+                name = RULE_FILES[key]
+                resource = name.replace(".csv", ".example.csv")
+                payload = files("manictime_pipeline").joinpath("resources", resource).read_bytes()
+                exists = target.exists()
+                if not exists and not dry_run:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open("xb") as stream:
+                        stream.write(payload)
+                result.append(
+                    {
+                        "path": str(target),
+                        "action": "preserved"
+                        if exists
+                        else "would_create"
+                        if dry_run
+                        else "created",
+                    }
+                )
     return result
 
 

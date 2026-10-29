@@ -3,22 +3,37 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import sqlite3
+import sys
 import webbrowser
 from pathlib import Path
-from typing import Any
-
-import yaml
+from typing import NoReturn
 
 from . import __version__
-from .config import config_list, initialize_config, load_config, selected_profile
+from .config import (
+    app_root,
+    config_list,
+    initialize_config,
+    load_config,
+    path_value,
+    selected_profile,
+)
 from .database import inspect_source
 from .logging_utils import SUCCESS, configure
+from .output import config_lines as config_lines
+from .output import emit, failure_result, public_result
 from .pipeline import ingest, recover, verify
 from .report_rules import initialize_rules
 from .reports import build_report
+
+
+class ArgumentError(ValueError):
+    """Argument usage error, retaining exit code 2 while allowing selected output."""
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        raise ArgumentError(message)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -33,10 +48,23 @@ def parser() -> argparse.ArgumentParser:
     verbosity = common.add_mutually_exclusive_group()
     verbosity.add_argument("-q", "--quiet", action="store_true", help="Only errors on stderr")
     verbosity.add_argument("-v", "--verbose", action="store_true", help="Include debug diagnostics")
-    root = argparse.ArgumentParser(
+    common.add_argument(
+        "--json",
+        action="store_true",
+        help="Print one machine-readable JSON result instead of the default key=value list",
+    )
+    common.add_argument(
+        "--full-output",
+        action="store_true",
+        help="Include unchanged partition details, in either text or JSON results",
+    )
+    root = Parser(
         prog="tkn-manictime-pipeline",
         parents=[common],
         description="Keep the latest ManicTime DBs, export CSV and build local HTML reports.",
+        epilog="Results: key=value by default; --json selects JSON. Progress and diagnostics "
+        "go to stderr. --quiet/--verbose affect logs only. Exit codes: 0 success, "
+        "1 configuration/processing failure, 2 argument error, 130 interrupted.",
     )
     root.add_argument("--version", action="version", version=__version__)
     commands = root.add_subparsers(dest="command", required=True)
@@ -46,14 +74,13 @@ def parser() -> argparse.ArgumentParser:
         "init", parents=[common], help="Safely create user configuration"
     )
     init.add_argument("--dry-run", action="store_true", help="Preview; do not create a config file")
-    listing = config_commands.add_parser(
+    config_commands.add_parser(
         "list",
         parents=[common],
         help="List resolved values and winning sources",
         description="Read settings without writing files. Print one key=value per line; "
         "nested keys use dots and list items use indexes. Windows paths are copyable.",
     )
-    listing.add_argument("--json", action="store_true", help="Print the full result as JSON")
     rules = commands.add_parser("rules", parents=[common], help="Create editable report rules")
     rules_commands = rules.add_subparsers(dest="rules_command", required=True)
     rules_init = rules_commands.add_parser(
@@ -126,53 +153,63 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
-def config_lines(value: Any, prefix: str = "") -> list[str]:
-    """Flatten settings into single-line entries, preserving literal path separators."""
-    if isinstance(value, dict):
-        if not value:
-            return [f"{prefix}={{}}"]
-        return [
-            line
-            for key, item in value.items()
-            for line in config_lines(item, f"{prefix}.{key}" if prefix else key)
-        ]
-    if isinstance(value, list):
-        if not value:
-            return [f"{prefix}=[]"]
-        return [
-            line
-            for index, item in enumerate(value)
-            for line in config_lines(item, f"{prefix}[{index}]")
-        ]
-    if isinstance(value, str):
-        escapes = {"\r": "\\r", "\n": "\\n", "\t": "\\t"}
-        display = "".join(
-            escapes.get(char, f"\\u{ord(char):04x}")
-            if ord(char) < 32 or 127 <= ord(char) <= 159 or char in "\u2028\u2029"
-            else char
-            for char in value
-        )
-    else:
-        display = json.dumps(value, ensure_ascii=False)
-    return [f"{prefix}={display}"]
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
-    verbose = getattr(args, "verbose", False)
-    quiet = getattr(args, "quiet", False)
-    if verbose and quiet:
-        parser().error("--quiet and --verbose cannot be combined")
-    configure(quiet, verbose)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    option_tokens = argv[: argv.index("--")] if "--" in argv else argv
+    json_output = "--json" in option_tokens
+    verbose = "--verbose" in option_tokens or "-v" in option_tokens
+    configure("--quiet" in option_tokens or "-q" in option_tokens, verbose)
+    command = None
+    args = None
+    targets = []
     try:
+        args = parser().parse_args(argv)
+        command = " ".join(
+            filter(
+                None,
+                [
+                    args.command,
+                    getattr(args, "config_command", None),
+                    getattr(args, "rules_command", None),
+                ],
+            )
+        )
+        json_output = getattr(args, "json", False)
+        verbose = getattr(args, "verbose", False)
+        quiet = getattr(args, "quiet", False)
+        if verbose and quiet:
+            raise ArgumentError("--quiet and --verbose cannot be combined")
+        configure(quiet, verbose)
         explicit = getattr(args, "config", None)
         profile_name = getattr(args, "profile", None)
+        targets = (
+            [{"role": "config", "path": str(path_value(str(explicit)))}]
+            if explicit
+            else [
+                {"role": "user_config", "path": str(app_root() / "config.yaml")},
+                {"role": "project_config", "path": str(Path.cwd() / ".tkn/config.yaml")},
+            ]
+        )
         if args.command == "config" and args.config_command == "init":
+            targets = [{"role": "user_config", "path": str(app_root() / "config.yaml")}]
             if explicit is not None or profile_name is not None:
                 raise ValueError("config init targets the user config; omit --config and --profile")
             result = initialize_config(args.dry_run)
         else:
             config = load_config(explicit, profile_name)
+            if args.command in {"rules", "build-report", "review"}:
+                from .report_rules import rule_paths
+
+                targets = [
+                    {"role": key, "path": str(path)}
+                    for key, path in rule_paths(config["values"]).items()
+                ]
+                targets.append(
+                    {
+                        "role": "report_path",
+                        "path": str(path_value(config["values"]["report_path"])),
+                    }
+                )
             if args.command == "config":
                 result = config_list(config)
             elif args.command == "rules":
@@ -183,7 +220,12 @@ def main(argv: list[str] | None = None) -> int:
                 if profile_name:
                     raise ValueError("review updates all profiles; omit --profile")
                 review(config, args.port, args.no_open)
-                return 0
+                root = path_value(config["values"]["report_path"])
+                result = {
+                    "action": "stopped",
+                    "report_path": str(root),
+                    "index": str(root / "index.html"),
+                }
             elif args.command == "build-report":
                 result = build_report(config, args.dry_run, profile_name, args.all)
                 for device in result["devices"]:
@@ -206,6 +248,15 @@ def main(argv: list[str] | None = None) -> int:
                         logging.warning("Report created; browser could not open: %s", exc)
             else:
                 profile = selected_profile(config)
+                targets = [
+                    {"role": role, "path": str(path)}
+                    for role, path in (
+                        ("source_path", profile.source_path),
+                        ("raw_directory", profile.raw_directory),
+                        ("processed_path", profile.processed_path),
+                        ("state_path", profile.state_path),
+                    )
+                ]
                 if args.command == "inspect":
                     result = inspect_source(profile.source_directory())
                 elif args.command == "ingest":
@@ -219,18 +270,23 @@ def main(argv: list[str] | None = None) -> int:
             logging.info("Showing resolved configuration")
         else:
             logging.log(SUCCESS, "%s completed", args.command)
-        if args.command != "build-report":
-            if listing and not args.json:
-                print("\n".join(config_lines(result)))
-            else:
-                print(json.dumps(result, ensure_ascii=False, indent=2))
+        emit(
+            public_result(command, result, full_output=getattr(args, "full_output", False)),
+            json_output=json_output,
+        )
         return 0
-    except (ValueError, OSError, sqlite3.Error, yaml.YAMLError, KeyError, TypeError) as exc:
+    except Exception as exc:
         logging.error("%s", exc, exc_info=verbose)
-        return 1
-    except KeyboardInterrupt:
-        if args.command == "build-report":
-            logging.error("Interrupted; rerun build-report to finish the report")
+        code = 2 if isinstance(exc, ArgumentError) else 1
+        emit(failure_result(command, exc, code, targets), json_output=json_output)
+        return code
+    except KeyboardInterrupt as exc:
+        if getattr(args, "command", None) == "build-report":
+            remedy = "Interrupted; rerun build-report to finish the report"
         else:
-            logging.error("Interrupted; run recover before reading Raw or CSV data")
+            remedy = "Interrupted; run recover before reading Raw or CSV data"
+        logging.error("%s", remedy)
+        result = failure_result(command, exc, 130, targets)
+        result["recovery_hint"] = remedy
+        emit(result, json_output=json_output)
         return 130

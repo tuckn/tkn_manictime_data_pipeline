@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from . import transaction
 from .application_rules import ROLES, parse_application_rules
 from .config import path_value, selected_profile
+from .diagnostics import error_target, progress_items, target_error
 from .io import child_path, process_lock, read_json, sha256_file
 from .report_data import GENERATOR_VERSION, build_data, report_cutoff, rules_from
 from .report_rules import extraction_rules, rule_paths
@@ -411,13 +412,19 @@ def build_report(
         # Validate every user rule file, even when data is reusable.
         for path in paths.values():
             if not path.is_file():
-                raise ValueError(f"Missing report rules: {path}; run rules init first")
-        app_rules = rules_from(paths["application_rules_path"])
-        site_rules = rules_from(paths["site_rules_path"], sites=True)
-        extraction = extraction_rules(paths["extraction_rules_path"])
-        overrides = parse_application_rules(
-            paths["application_overrides_path"].read_text("utf-8-sig")
-        )
+                raise target_error(
+                    ValueError(f"Missing report rules: {path}; run rules init first"), path, "rules"
+                )
+        with error_target(paths["application_rules_path"], "application_rules_path"):
+            app_rules = rules_from(paths["application_rules_path"])
+        with error_target(paths["site_rules_path"], "site_rules_path"):
+            site_rules = rules_from(paths["site_rules_path"], sites=True)
+        with error_target(paths["extraction_rules_path"], "extraction_rules_path"):
+            extraction = extraction_rules(paths["extraction_rules_path"])
+        with error_target(paths["application_overrides_path"], "application_overrides_path"):
+            overrides = parse_application_rules(
+                paths["application_overrides_path"].read_text("utf-8-sig")
+            )
         rule_signature = hashlib.sha256(
             canonical(
                 [app_rules, site_rules, extraction, overrides, values["report_lookup_gap_minutes"]]
@@ -431,13 +438,18 @@ def build_report(
             "dry_run": dry_run,
             "devices": [],
         }
+        stack.enter_context(progress_items(result["devices"]))
         cleanup = []
         for profile in profiles:
             with nullcontext() if dry_run else transaction.dataset_lock(profile):
                 transaction.require_settled(profile)
                 source = load_report_source(profile)
                 if source is None:
-                    raise ValueError(f"No successful ingest for {profile.name}; run ingest first")
+                    raise target_error(
+                        ValueError(f"No successful ingest for {profile.name}; run ingest first"),
+                        profile.state_path / "current.json",
+                        "current",
+                    )
                 validate_artifacts(profile, source)
                 activity_paths = sorted(
                     child_path(profile.processed_path, item["path"])

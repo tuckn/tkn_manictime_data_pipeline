@@ -4,6 +4,7 @@ import csv
 import sys
 
 from .config import Profile
+from .diagnostics import target_error
 from .export import BOM
 from .io import child_path, sha256_file
 
@@ -20,21 +21,29 @@ def validate_artifacts(profile: Profile, manifest: dict, count_rows: bool = Fals
     for key, artifact in manifest["artifacts"].items():
         path = child_path(profile.processed_path, artifact["path"])
         if not path.is_file() or sha256_file(path) != artifact["sha256"]:
-            raise ValueError(f"Missing or edited output; restore it before ingest: {path}")
+            raise target_error(
+                ValueError(f"Missing or edited output; restore it before ingest: {path}"),
+                path,
+                "csv",
+            )
         with path.open("rb") as stream:
             if stream.read(len(BOM)).startswith(BOM):
-                raise ValueError(f"CSV BOM does not match its manifest: {key}")
+                raise target_error(
+                    ValueError(f"CSV BOM does not match its manifest: {key}"), path, "csv"
+                )
         if count_rows:
             with path.open(encoding="utf-8", newline="") as stream:
                 reader = csv.reader(stream)
                 header = next(reader)
                 expected = [c["name"] for c in manifest["tables"][artifact["table"]]["columns"]]
                 if header != expected:
-                    raise ValueError(f"CSV header mismatch: {key}")
+                    raise target_error(ValueError(f"CSV header mismatch: {key}"), path, "csv")
                 count = 0
                 for row in reader:
                     if len(row) != len(header):
-                        raise ValueError(f"CSV column count mismatch: {key}")
+                        raise target_error(
+                            ValueError(f"CSV column count mismatch: {key}"), path, "csv"
+                        )
                     count += 1
             if count != artifact["rows"]:
-                raise ValueError(f"CSV row count mismatch: {key}")
+                raise target_error(ValueError(f"CSV row count mismatch: {key}"), path, "csv")

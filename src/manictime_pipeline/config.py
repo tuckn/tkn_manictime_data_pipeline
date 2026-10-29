@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from .diagnostics import error_target, target_error
+
 SCHEMA_VERSION = "2.3.0"
 PROFILE_KEYS = {"device_id", "source_path", "raw_path", "processed_data_path"}
 REQUIRED_PROFILE_KEYS = {"device_id", "source_path"}
@@ -141,14 +143,22 @@ class Profile:
             if (p / "ManicTimeReports.db").is_file()
         ]
         if len(candidates) != 1:
-            raise ValueError(
-                f"Expected exactly one DB directory at {self.source_path} or its Data child; "
-                "both ManicTimeCore.db and ManicTimeReports.db are required"
+            raise target_error(
+                ValueError(
+                    f"Expected exactly one DB directory at {self.source_path} or its Data child; "
+                    "both ManicTimeCore.db and ManicTimeReports.db are required"
+                ),
+                self.source_path,
+                "source_path",
             )
         directory = candidates[0]
         for name in ("ManicTimeCore.db", "ManicTimeReports.db"):
             if not (directory / name).is_file():
-                raise ValueError(f"Missing source database: {directory / name}")
+                raise target_error(
+                    ValueError(f"Missing source database: {directory / name}"),
+                    directory / name,
+                    "source_database",
+                )
         return directory
 
     def validate_paths(self) -> None:
@@ -184,7 +194,9 @@ def load_config(explicit: Path | None = None, profile_name: str | None = None) -
     if explicit is not None:
         explicit = explicit.expanduser().resolve()
         if not explicit.is_file():
-            raise ValueError(f"Configuration file does not exist: {explicit}")
+            raise target_error(
+                ValueError(f"Configuration file does not exist: {explicit}"), explicit, "config"
+            )
         paths.append(explicit)
     seen = set()
     for path in paths:
@@ -192,7 +204,8 @@ def load_config(explicit: Path | None = None, profile_name: str | None = None) -
         if path in seen or not path.is_file():
             continue
         seen.add(path)
-        data = _validate(yaml.load(path.read_text(encoding="utf-8-sig"), UniqueLoader), path)
+        with error_target(path, "config"):
+            data = _validate(yaml.load(path.read_text(encoding="utf-8-sig"), UniqueLoader), path)
         sources.append({"path": str(path), "schema_version": data["schema_version"]})
         for key, value in data.items():
             if key == "schema_version":
