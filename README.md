@@ -1,6 +1,6 @@
-# tkn-manictime-pipeline: Tkn ManicTime Data Pipeline
+# Tkn ManicTime Data Pipeline — ManicTime の記録を CSV と HTML レポートにする CLI
 
-ManicTime の SQLite DB の最新コピーを Raw として保存し、再利用できる CSV を抽出する CLI です。
+`tkn-manictime-pipeline` は、ManicTime の SQLite DB の最新コピーを Raw として保存し、再利用できる CSV を抽出する CLI です。
 初回は全期間の活動と関連テーブルを出力し、次回からは変更のあった月・テーブルだけを更新します。
 Raw は最新1世代を保持し、CSV も固定パスに最新データを保存します。来歴・チェックポイントは state に集約します。
 取得済みCSVから、PC別に年・月・週を切り替えられるローカルHTMLレポートも生成します。
